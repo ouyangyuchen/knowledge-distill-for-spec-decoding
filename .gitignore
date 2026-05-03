@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.eggs/
+
+# uv
+.uv/
+
+# Project artefacts (never commit)
+data/
+checkpoints/
+results/
+wandb/
+outputs/
+multirun/
+report/
+
+# HF / model caches
+.cache/
+*.safetensors
+*.bin
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
