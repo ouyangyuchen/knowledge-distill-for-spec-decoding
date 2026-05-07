@@ -1,0 +1,58 @@
+defaults:
+  - model: qwen25
+  - eval: default
+  - runtime: default
+  - benchmark: default
+  - speedup: vllm
+  - _self_
+
+run_name: vanilla
+seed: 42
+
+# Which phase to run. The two phases are kept in separate processes so vLLM
+# never shares a CUDA context with HF (it cannot release one cleanly).
+#   - hf:   load HF target+draft, run instrumented loop, write eval_summary.json
+#           (acceptance_rate, avg_accepted_tokens, HF-side timings).
+#   - vllm: skip HF model loading, run vLLM vanilla+SD passes in spawn
+#           subprocesses, then merge results into the existing eval_summary.json
+#           (overwrites top-level sd_time_s/vanilla_time_s/speedup/tps when SD
+#           ran successfully; always populates engines.vllm).
+# scripts/run_eval_pipeline.py drives both in sequence with the same run_name.
+engine: hf
+
+# Optional path (local checkpoint dir) or HF id for the draft model. If null,
+# evaluation runs vanilla (target-only) inference and reports speedup=1.0.
+draft: null
+
+# Prompt source. Either a local jsonl path conforming to the data contract in
+# README.md, or an HF dataset spec. Exactly one must be set.
+prompts:
+  jsonl: null            # e.g. data/processed/ultrachat_50k/eval.jsonl
+  hf_dataset: {
+    name: HuggingFaceH4/ultrachat_200k,
+    split: test_sft,
+    prompt_field: prompt
+  }
+  limit: 256               # cap number of prompts (null = all)
+
+# Eval outputs (eval_summary.json, generations.jsonl, timing.json, config.yaml).
+# Default to per-user scratch — generations.jsonl over hundreds of prompts can
+# easily exceed the cluster home quota. Override on other hosts.
+results_dir: /scratch/izar/${oc.env:USER}/cs552-results/${run_name}
+
+# Where HF should cache models/datasets. The cluster home directory has a
+# tight quota, so default to per-user scratch. Override on the CLI for other
+# hosts, e.g. `hf_cache=~/.cache/huggingface`. Resolved into HF_HOME *before*
+# we import transformers/huggingface_hub, so it must be set via Hydra config
+# (not just os.environ at runtime).
+hf_cache: /scratch/izar/${oc.env:USER}/hf_cache
+
+# Hydra also writes its own per-job log/output directory; redirect that to
+# scratch too. Without this it lands under cwd/outputs/... and hits the home
+# quota even when results_dir is fine.
+hydra:
+  run:
+    dir: /scratch/izar/${oc.env:USER}/hydra_outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: /scratch/izar/${oc.env:USER}/hydra_sweeps/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
