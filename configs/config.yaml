@@ -24,10 +24,11 @@ prompts:
   limit: 256               # cap number of prompts (null = all)
 
 # Eval outputs (eval_summary.json, generations.jsonl, timing.json, config.yaml).
-# Relative path under cwd. On RunAI we clone the repo under /scratch/<repo>
-# and run from there, so this resolves to /scratch/<repo>/results/<run_name>
-# — already inside the group scratch PVC, gitignored, and visible to TAs.
-results_dir: results/${run_name}
+# Absolute path on the RunAI group scratch PVC, per rcp_support/README.md
+# §"Storage layout" — keeps results out of the repo and visible to teammates
+# and TAs through the group scratch mount. Anything under /scratch is wiped
+# end of July 2026.
+results_dir: /scratch/cs552-results/${run_name}
 
 # Where HF should cache models/datasets. notebooks/submit.sh exports
 # HF_HOME=/scratch/hf_cache on the RunAI pod, so this resolves to that path
@@ -37,7 +38,8 @@ results_dir: results/${run_name}
 hf_cache: ${oc.env:HF_HOME,'~/.cache/huggingface'}
 
 # Hydra also writes its own per-job log/output directory. Keep it under cwd
-# so the artefacts stay co-located with results_dir under /scratch/<repo>.
+# (the repo clone, typically /scratch/<repo>) so logs sit alongside the code
+# while heavy eval artefacts go to results_dir under /scratch/cs552-results/.
 hydra:
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

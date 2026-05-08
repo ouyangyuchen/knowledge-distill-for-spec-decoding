@@ -160,7 +160,7 @@ cs552-mnlp-project/
 │   ├── submit_train.sh           # non-interactive training-job starter
 │   ├── Dockerfile                # optional custom-image template
 │   └── build.sh                  # optional Harbor push helper
-└── (gitignored) data/, checkpoints/, results/, wandb/
+└── (gitignored) data/, checkpoints/, wandb/   # results land in /scratch/cs552-results/
 ```
 
 ---
@@ -191,12 +191,15 @@ CLI for SD evaluation. One process per invocation; the HF instrumented loop in
 writes:
 
 ```
-results/<run_name>/
+/scratch/cs552-results/<run_name>/
   eval_summary.json   # the schema below — used by aggregate_results.py
   generations.jsonl   # per-prompt: prompt, generation, accepted_lens[], times{}
   timing.json         # raw per-prompt timings, n_warmup, n_repeats
   config.yaml         # resolved config snapshot
 ```
+
+The path is configurable via `cfg.results_dir`; the default lands on the
+RunAI group scratch PVC per `rcp_support/README.md` §"Storage layout".
 
 `eval_summary.json` schema (frozen top-level keys, plus an `engines.hf` block).
 `quality_score` is a **dict** so a single config can be scored against multiple
@@ -337,7 +340,7 @@ defaults:
 run_name: ${loss}_${data}_seed${seed}
 seed: 42
 output_dir: checkpoints/${run_name}
-results_dir: results/${run_name}
+results_dir: /scratch/cs552-results/${run_name}
 hf_cache: ${oc.env:HF_HOME,'~/.cache/huggingface'}
 ```
 
@@ -406,7 +409,7 @@ uv run python scripts/evaluate_sd.py \
 ```
 
 End artefacts:
-`results/kd_jsd_50k_targetgen_a0.5/{eval_summary.json,generations.jsonl,timing.json}`.
+`/scratch/cs552-results/kd_jsd_50k_targetgen_a0.5/{eval_summary.json,generations.jsonl,timing.json}`.
 
 ### Step 4: Runtime sweep
 
@@ -416,12 +419,13 @@ uv run python scripts/runtime_sweep.py \
 ```
 
 Iterates `gamma ∈ {1,2,4,6,8}` × `max_new ∈ {128,256}`, writing one
-`results/<best>__gamma{γ}_max{n}/eval_summary.json` per cell.
+`/scratch/cs552-results/<best>__gamma{γ}_max{n}/eval_summary.json` per cell.
 
 ### Step 5: Aggregate
 
 ```bash
-uv run python scripts/aggregate_results.py results/ -o report/attribution_table.md
+uv run python scripts/aggregate_results.py /scratch/cs552-results/ \
+  -o report/attribution_table.md
 ```
 
 Joins every `eval_summary.json` into a staged attribution table — vanilla →
@@ -560,7 +564,7 @@ Smoke acceptance:
 - Eval writes a schema-valid `eval_summary.json` for both `draft=null` (vanilla) and
   the trained draft, with finite, positive `speedup` and a populated
   `quality_score` dict.
-- `aggregate_results.py` over a 2-row `results/` produces a markdown table.
+- `aggregate_results.py` over a 2-row `/scratch/cs552-results/` produces a markdown table.
 
 Once cluster smoke is green, the documented ablation commands above are ready.
 
@@ -569,9 +573,11 @@ Once cluster smoke is green, the documented ablation commands above are ready.
 ## Conventions
 
 - Result identifiers (`run_name`) flow from Hydra and are reused as both the
-  `checkpoints/<run_name>/` and `results/<run_name>/` directory names. Pick names
-  that round-trip with `aggregate_results.py`.
-- Never commit `data/`, `checkpoints/`, `results/`, or `wandb/`.
+  `checkpoints/<run_name>/` (in-repo, gitignored) and
+  `/scratch/cs552-results/<run_name>/` (group scratch PVC) directory names. Pick
+  names that round-trip with `aggregate_results.py`.
+- Never commit `data/`, `checkpoints/`, or `wandb/`. Eval artefacts live under
+  `/scratch/cs552-results/` on the RunAI pod and are never staged into the repo.
 - Schema changes to `eval_summary.json` are breaking — bump a `schema_version` field
   and update `tests/test_eval_schema.py` + `aggregate_results.py` in the same PR.
 - Hydra overrides go on the CLI, not in code. If you find yourself hard-coding a

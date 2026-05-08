@@ -2,8 +2,9 @@
 
 Loads HF target (+ optional draft), runs the instrumented loop in
 `src/kdsd/sd/instrument.py`, and writes
-`results/<run_name>/{eval_summary.json, generations.jsonl, timing.json,
-config.yaml}`.
+`/scratch/cs552-results/<run_name>/{eval_summary.json, generations.jsonl,
+timing.json, config.yaml}` (path comes from `cfg.results_dir`; the default
+points at the RunAI group scratch PVC per rcp_support/README.md).
 
 Override anything from the CLI, e.g.:
 
