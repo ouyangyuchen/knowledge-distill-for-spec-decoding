@@ -1,7 +1,7 @@
 """I/O helpers + eval_summary.json schema validation.
 
-The schema is the one frozen in README.md §"Eval contract". `quality_score` is a
-dict (possibly empty); aggregate_results.py reads `quality_score.<name>`.
+The schema is the one frozen in CLAUDE.md §"Eval contract". `quality_score` is
+a dict (possibly empty); aggregate_results.py reads `quality_score.<name>`.
 """
 
 from __future__ import annotations
@@ -66,8 +66,6 @@ def validate_eval_summary(summary: dict[str, Any]) -> None:
         raise ValueError("quality_score must be a dict (possibly empty {})")
     if not isinstance(summary["decoding"], dict):
         raise ValueError("decoding must be a dict")
-    # `engines` is optional; when present it must be {engine_name: {...}, ...}.
-    # Lets consumers inspect HF-vs-vLLM numbers without breaking older runs.
     if "engines" in summary:
         if not isinstance(summary["engines"], dict):
             raise ValueError("engines must be a dict (possibly empty {})")

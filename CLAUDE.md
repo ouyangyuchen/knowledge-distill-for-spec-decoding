@@ -11,6 +11,13 @@ serve as a high-acceptance speculative-decoding (SD) draft for
 `Qwen/Qwen2.5-3B-Instruct`. The two models share a tokenizer (verified) and are
 FP16/BF16 friendly.
 
+All SD timing and per-step metrics come from a single HF-based instrumented loop
+(`src/kdsd/sd/instrument.py`). The loop implements rejection sampling and
+`DynamicCache` management directly so per-step `accepted_lens` is exposed —
+something HF's `model.generate(assistant_model=draft)` does not surface, and
+something vLLM 0.11+ no longer supports for arbitrary KD-trained drafts (V1
+removed draft-model SD; only ngram/EAGLE/Medusa/MTP remain).
+
 ---
 
 ## Stack & Environment
@@ -26,7 +33,7 @@ FP16/BF16 friendly.
   cache under `~/.cache/huggingface` by default; override with `HF_HOME`.
 - GPU target: 1× 40GB A100 on the EPFL RCP RunAI cluster (course cap),
   `bf16` preferred. The course image (`registry.rcp.epfl.ch/course-cs-552/base-vllm:v1`)
-  ships torch 2.8 + cu128, transformers 4.57, vLLM 0.11, and JupyterLab 4.5.
+  ships torch 2.8 + cu128, transformers 4.57, and JupyterLab 4.5.
   See `rcp_support/README.md` for cluster setup, submission, and storage layout.
 
 Bootstrap:
@@ -81,12 +88,9 @@ cs552-mnlp-project/
 │   ├── runtime/
 │   │   ├── default.yaml
 │   │   └── sweep.yaml
-│   ├── benchmark/
-│   │   ├── default.yaml
-│   │   └── full.yaml
-│   └── speedup/
-│       ├── hf.yaml                # HF custom impl is sole timing source
-│       └── vllm.yaml              # default — vLLM speedup pass (subprocess-isolated)
+│   └── benchmark/
+│       ├── default.yaml
+│       └── full.yaml
 ├── src/kdsd/
 │   ├── __init__.py
 │   ├── models/
@@ -111,8 +115,7 @@ cs552-mnlp-project/
 │   │   ├── __init__.py
 │   │   ├── hf_assisted.py
 │   │   ├── custom_loop.py
-│   │   ├── instrument.py
-│   │   └── vllm_runner.py         # subprocess-isolated vLLM speedup pass
+│   │   └── instrument.py
 │   ├── eval/
 │   │   ├── __init__.py
 │   │   ├── runner.py
@@ -137,10 +140,8 @@ cs552-mnlp-project/
 │   ├── generate_target_responses.py
 │   ├── cache_target_logits.py
 │   ├── train.py
-│   ├── evaluate_sd.py            # one phase per invocation (engine=hf|vllm)
-│   ├── run_eval_pipeline.py      # drives both phases as separate processes
+│   ├── evaluate_sd.py            # single-phase HF eval entrypoint
 │   ├── hf_sd_speedup.py          # standalone HF SD speedup probe
-│   ├── vllm_sd_speedup.py        # standalone vLLM SD speedup probe
 │   ├── runtime_sweep.py
 │   └── aggregate_results.py
 ├── tests/
@@ -185,11 +186,9 @@ checkpoint, with no special-casing per training recipe.
 
 ### 2. Eval contract — `scripts/evaluate_sd.py`
 
-CLI for SD evaluation. Runs **one phase per invocation** (selected via the
-top-level `engine` Hydra field) so vLLM never shares a CUDA context with HF
-— vLLM cannot release one cleanly, and the second engine load OOMs in the
-same process. `scripts/run_eval_pipeline.py` is the orchestrator that drives
-both phases in sequence with the same `run_name`. Always writes:
+CLI for SD evaluation. One process per invocation; the HF instrumented loop in
+`src/kdsd/sd/instrument.py` produces all timing and per-step metrics. Always
+writes:
 
 ```
 results/<run_name>/
@@ -199,9 +198,9 @@ results/<run_name>/
   config.yaml         # resolved config snapshot
 ```
 
-`eval_summary.json` schema (frozen top-level keys, plus an optional `engines`
-block). `quality_score` is a **dict** so a single config can be scored against
-multiple benchmarks in one run:
+`eval_summary.json` schema (frozen top-level keys, plus an `engines.hf` block).
+`quality_score` is a **dict** so a single config can be scored against multiple
+benchmarks in one run:
 
 ```json
 {
@@ -222,72 +221,38 @@ multiple benchmarks in one run:
   "decoding": {"mode": "greedy", "max_new_tokens": 256, "num_assistant_tokens": 4},
   "n_prompts": 200, "n_warmup": 2, "n_repeats": 3,
   "engines": {
-    "hf":   {"sd_time_s": 95.0, "vanilla_time_s": null, "speedup": 1.0,
-             "tokens_per_second": 16.9, "acceptance_rate": 0.52,
-             "avg_accepted_tokens": 2.1, "n_outer_steps": 1240,
-             "target_calls": 1240, "draft_calls": 4960,
-             "draft_forward_s": 12.1, "target_forward_s": 71.4,
-             "batched": false},
-    "vllm": {"sd_time_s": 87.2, "vanilla_time_s": 123.4, "speedup": 1.41,
-             "tokens_per_second": 18.6, "vanilla_tokens_per_second": 13.2,
-             "vanilla_tokens": 1632, "sd_tokens": 1622,
-             "repeats": 3, "n_warmup": 1, "batched": true,
-             "ok": true, "vanilla_ok": true, "sd_ok": true, "error": null,
-             "spec_stats": {"draft_acceptance_rate": 0.55,
-                            "system_efficiency": 0.71}}
+    "hf": {"sd_time_s": 87.2, "vanilla_time_s": 123.4, "speedup": 1.41,
+           "tokens_per_second": 18.6, "acceptance_rate": 0.52,
+           "avg_accepted_tokens": 2.1, "n_outer_steps": 1240,
+           "target_calls": 1240, "draft_calls": 4960,
+           "draft_forward_s": 12.1, "target_forward_s": 71.4,
+           "batched": false}
   }
 }
 ```
 
 `"quality_score": {}` is valid (skip benchmarks). Validation lives in
-`tests/test_eval_schema.py` and `src/kdsd/utils/io.py`. `aggregate_results.py` reads
-`quality_score.<key>`, so adding a benchmark never requires changing the aggregator.
-`engines` is **optional** (not in `REQUIRED_SUMMARY_KEYS`) so older summary files
-still validate; when present, each engine's sub-block must be a dict.
+`tests/test_eval_schema.py` and `src/kdsd/utils/io.py`. `aggregate_results.py`
+reads `quality_score.<key>`, so adding a benchmark never requires changing the
+aggregator. `engines` is **optional** (not in `REQUIRED_SUMMARY_KEYS`) so older
+summary files still validate; when present, each engine's sub-block must be a
+dict.
 
-**Two phases** (selected via the top-level `engine` field; the `speedup/`
-config group still selects which vLLM kwargs apply):
+`engine=hf` loads the HF target (and the optional draft), runs the
+instrumented SD loop and a vanilla baseline (when `draft` is set and
+`eval.run_vanilla_baseline=true`), and writes the full eval_summary +
+generations + timing artefacts. The HF loop has unavoidable D→H syncs
+(accept-mask transfer, EOS scan, rejection-resample `s>0` check) so its
+`speedup` is conservative — but it is consistent across all KD ablations,
+which is what the attribution table cares about.
 
-- `engine=hf` — load HF target (and optional draft), run the instrumented
-  loop in `src/kdsd/sd/instrument.py`, write the full eval_summary +
-  generations + timing artefacts. This phase is the sole source of trusted
-  per-step metrics: `acceptance_rate`, `avg_accepted_tokens`, per-prompt
-  `accepted_lens`. The HF vanilla baseline is **skipped** when the resolved
-  speedup config is `vllm` (vanilla timing will come from the vLLM phase
-  instead); otherwise it's measured in the same job so `speedup` is anchored
-  to fresh `vanilla_time_s`. The HF loop has unavoidable D→H syncs
-  (accept-mask transfer, EOS scan, rejection-resample `s>0` check) so its
-  `speedup` is conservative.
-- `engine=vllm` — skip HF model loading entirely. Re-tokenize the prompts in
-  the parent (CPU-only) and run vanilla + SD passes through vLLM in spawn
-  subprocesses, then read the prior `eval_summary.json`, merge a `vllm`
-  block under `engines.vllm`, and overwrite the top-level `sd_time_s` /
-  `vanilla_time_s` / `speedup` / `tokens_per_second` when the SD pass
-  succeeded. Errors out if no prior summary exists for `run_name`. Both
-  engines see byte-identical model input: prompts are chat-templated and
-  tokenized with `add_special_tokens=False` and pushed to vLLM via the
-  `TokensPrompt` dict form. `skip_tokenizer_init` is **False** on the LLM
-  (vLLM's spec-decode worker requires the tokenizer for stop-token logic,
-  and EOS detection on output requires it too); the input is still bypassed
-  because `TokensPrompt` skips the tokenizer for encoding.
-
-Run both phases together:
+Run an eval:
 
 ```bash
-uv run python scripts/run_eval_pipeline.py \
+uv run python scripts/evaluate_sd.py \
     run_name=spec_smoke draft=Qwen/Qwen2.5-0.5B-Instruct \
     prompts.jsonl=data/processed/eval.jsonl prompts.limit=20
 ```
-
-Or run a single phase directly:
-
-```bash
-uv run python scripts/evaluate_sd.py engine=hf  run_name=spec_smoke ...
-uv run python scripts/evaluate_sd.py engine=vllm run_name=spec_smoke ...
-```
-
-`engines.{hf,vllm}` preserves both engines' raw numbers regardless of which
-overwrites the top-level fields.
 
 ### 3. Loss contract — `src/kdsd/losses/combined.py`
 
@@ -325,45 +290,6 @@ def speculative_generate(
 This is the source of truth for acceptance-rate / runtime-profile metrics. The
 GPU-only forward times use CUDA events so the caller's wall-clock isn't
 contaminated by per-forward sync overhead.
-
-### 4b. SD speedup contract — `src/kdsd/sd/vllm_runner.py`
-
-```python
-@dataclass
-class VllmEngineResult:
-    ok: bool
-    elapsed_s: float
-    tokens: int
-    spec_stats: VllmSpecStats | None    # only set on the SD engine result
-    error: str | None
-
-@dataclass
-class VllmSpeedupResult:
-    vanilla: VllmEngineResult
-    sd: VllmEngineResult
-    repeats: int
-    n_warmup: int
-    # properties: vanilla_tokens_per_second, sd_tokens_per_second, speedup
-
-def run_vllm_speedup(
-    *, prompt_token_ids: list[list[int]],
-    target_id: str, draft_id: str | None,
-    gamma: int, max_new_tokens: int,
-    mode: str, temperature: float, top_p: float, seed: int,
-    vllm_cfg: dict,                    # resolved configs/speedup/vllm.yaml
-) -> VllmSpeedupResult
-```
-
-The runner spawns one subprocess per engine (vanilla, SD) — vLLM can't free
-CUDA state in-process, so a single Python process can host at most one engine
-at a time. `prompt_token_ids` must be tokenized in the parent with the same
-chat template + `add_special_tokens=False` settings as
-`runner._generate_one`. The runner also clamps the requested
-`gpu_memory_utilization` to actually-free GPU memory at subprocess start so
-the same config works on shared and dedicated GPUs.
-`scripts/vllm_sd_speedup.py` is a thin CLI over the same module for
-standalone use; `scripts/evaluate_sd.py engine=vllm` reuses
-`run_vllm_pass` + `merge_vllm_into_summary` from `kdsd.eval.runner`.
 
 ### 5. Data contract — processed split format
 
@@ -406,15 +332,13 @@ defaults:
   - eval: default
   - runtime: default
   - benchmark: default
-  - speedup: vllm
   - _self_
 
 run_name: ${loss}_${data}_seed${seed}
 seed: 42
-engine: hf                  # which eval phase to run: hf | vllm
 output_dir: checkpoints/${run_name}
 results_dir: results/${run_name}
-hf_cache: ${oc.env:HF_HOME,~/.cache/huggingface}
+hf_cache: ${oc.env:HF_HOME,'~/.cache/huggingface'}
 ```
 
 Every ablation is one CLI flip. All commands run **inside the RunAI pod**
@@ -429,8 +353,7 @@ your laptop, launch the pod with `notebooks/submit.sh` (see `rcp_support/`).
 | Response source       | `python scripts/train.py data=ultrachat_50k_target_gen`                  |
 | Runtime sweep         | `python scripts/runtime_sweep.py runtime=sweep draft=checkpoints/<best>/model` |
 | Multi-benchmark eval  | `python scripts/evaluate_sd.py benchmark=full draft=...`                 |
-| HF-only timing (no vLLM) | `python scripts/evaluate_sd.py engine=hf speedup=hf draft=...`        |
-| Two-phase eval (HF + vLLM) | `python scripts/run_eval_pipeline.py draft=...` (or `notebooks/run_eval_pipeline.ipynb`) |
+| Eval                  | `python scripts/evaluate_sd.py draft=...` (or `notebooks/run_eval_pipeline.ipynb`) |
 
 ---
 
@@ -469,44 +392,21 @@ Writes `checkpoints/kd_jsd_50k_targetgen_a0.5/{model,config.yaml,meta.json}`.
 
 ### Step 3: Evaluate
 
-The eval is split into two phases that must run in **separate processes**
-(vLLM cannot share a CUDA context with HF). On RunAI, the **primary flow is
-the notebook** `notebooks/run_eval_pipeline.ipynb`, which mirrors the
-script's subprocess split and reads the merged `eval_summary.json` inline.
+On RunAI, the **primary flow is the notebook**
+`notebooks/run_eval_pipeline.ipynb`, which streams `evaluate_sd.py` output
+inline and reads back the resulting `eval_summary.json`.
 
 Headless / unattended use (e.g. `runai bash` or
 `rcp_support/submit_train.sh`) keeps the equivalent CLI:
 
 ```bash
-uv run python scripts/run_eval_pipeline.py \
+uv run python scripts/evaluate_sd.py \
   draft=checkpoints/kd_jsd_50k_targetgen_a0.5/model \
   eval=default benchmark=default
 ```
 
-Either path runs `evaluate_sd.py engine=hf` (instrumented HF loop →
-produces `acceptance_rate`, `accepted_lens`, generations, an HF-side
-speedup) followed by `evaluate_sd.py engine=vllm` (vLLM vanilla + SD passes
-in spawn subprocesses → overwrites top-level `sd_time_s` /
-`vanilla_time_s` / `speedup` / `tokens_per_second` in the same
-`eval_summary.json` and adds an `engines.vllm` block). End artefacts:
+End artefacts:
 `results/kd_jsd_50k_targetgen_a0.5/{eval_summary.json,generations.jsonl,timing.json}`.
-
-If vLLM is not viable (mismatched draft/target vocab without `ngram=true`,
-no CUDA, debugging the custom loop), run only the HF phase and tell it to
-keep HF as the timing source:
-
-```bash
-uv run python scripts/evaluate_sd.py engine=hf speedup=hf \
-  draft=checkpoints/kd_jsd_50k_targetgen_a0.5/model
-```
-
-Top-level timing fields then come solely from `src/kdsd/sd/instrument.py`,
-including a fresh vanilla baseline measured in the same job.
-
-Skip individual phases via the orchestrator: `--skip-hf` (uses an existing
-`eval_summary.json` and only re-runs vLLM) or `--skip-vllm` (HF metrics
-only). The notebook supports the same by simply not executing one of the
-two phase cells.
 
 ### Step 4: Runtime sweep
 
@@ -559,7 +459,7 @@ and exit, use `rcp_support/submit_train.sh` (do **not** submit it as a
 deliverable). Set `TRAIN_COMMAND`, e.g. for an unattended eval:
 
 ```bash
-TRAIN_COMMAND='cd /scratch/<repo> && uv run python scripts/run_eval_pipeline.py \
+TRAIN_COMMAND='cd /scratch/<repo> && uv run python scripts/evaluate_sd.py \
   run_name=kd_jsd_50k draft=checkpoints/kd_jsd_50k/model'
 ./rcp_support/submit_train.sh
 ```
@@ -584,13 +484,12 @@ have a stable contract to call:
 2. `src/kdsd/utils/{io,timing,logging}.py` — needed by everything.
 3. `src/kdsd/models/{loader,kd_pair}.py` — load Qwen target/draft pair.
 4. `src/kdsd/sd/instrument.py` — custom speculative-decoding loop with rejection
-   sampling and KV-cache (`DynamicCache`) management. We implement this
-   directly rather than going through HF's `model.generate(assistant_model=draft)`
-   path because the frozen `eval_summary.json` schema requires per-step
-   `accepted_lens`, which HF's assisted decoding does not surface cleanly.
+   sampling and KV-cache (`DynamicCache`) management. Implemented directly
+   rather than going through HF's `model.generate(assistant_model=draft)` path
+   because the eval_summary.json schema requires per-step `accepted_lens`,
+   which HF's assisted decoding does not surface cleanly.
    `hf_assisted.py` / `custom_loop.py` remain as optional alternative entrypoints.
 5. `src/kdsd/eval/{runner,metrics}.py` + `src/kdsd/eval/benchmarks/{base,registry}.py`
-   - `src/kdsd/sd/vllm_runner.py` (optional vLLM speedup pass)
    - `scripts/evaluate_sd.py` — the contract everyone depends on; build first.
 6. `src/kdsd/data/{download,process,target_generate,logit_cache,dataset}.py`
    - `scripts/prepare_data.py`, `scripts/generate_target_responses.py`,

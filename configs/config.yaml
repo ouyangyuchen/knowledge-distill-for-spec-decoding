@@ -3,29 +3,17 @@ defaults:
   - eval: default
   - runtime: default
   - benchmark: default
-  - speedup: vllm
   - _self_
 
 run_name: vanilla
 seed: 42
-
-# Which phase to run. The two phases are kept in separate processes so vLLM
-# never shares a CUDA context with HF (it cannot release one cleanly).
-#   - hf:   load HF target+draft, run instrumented loop, write eval_summary.json
-#           (acceptance_rate, avg_accepted_tokens, HF-side timings).
-#   - vllm: skip HF model loading, run vLLM vanilla+SD passes in spawn
-#           subprocesses, then merge results into the existing eval_summary.json
-#           (overwrites top-level sd_time_s/vanilla_time_s/speedup/tps when SD
-#           ran successfully; always populates engines.vllm).
-# scripts/run_eval_pipeline.py drives both in sequence with the same run_name.
-engine: hf
 
 # Optional path (local checkpoint dir) or HF id for the draft model. If null,
 # evaluation runs vanilla (target-only) inference and reports speedup=1.0.
 draft: null
 
 # Prompt source. Either a local jsonl path conforming to the data contract in
-# README.md, or an HF dataset spec. Exactly one must be set.
+# CLAUDE.md, or an HF dataset spec. Exactly one must be set.
 prompts:
   jsonl: null            # e.g. data/processed/ultrachat_50k/eval.jsonl
   hf_dataset: {

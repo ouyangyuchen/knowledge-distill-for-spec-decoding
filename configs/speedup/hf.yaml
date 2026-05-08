@@ -1,4 +1,0 @@
-# Default speedup engine: HF custom impl (no extra pass).
-# eval_summary's top-level sd_time_s / vanilla_time_s / tokens_per_second / speedup
-# come from the HF instrumented loop in src/kdsd/sd/instrument.py.
-engine: hf
