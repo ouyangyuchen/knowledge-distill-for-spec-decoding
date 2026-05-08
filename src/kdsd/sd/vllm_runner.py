@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+import os
 import re
 import time
 import traceback
@@ -333,6 +334,13 @@ def _worker(
     `capture_spec_stats=True` we also scrape spec-decode metric log lines and
     fall back to engine internals for the same numbers.
     """
+    # vLLM 0.11 defaults to the V1 engine, which has not yet ported draft-model
+    # SD ("Speculative decoding with draft model is not supported yet …"). Pin
+    # to V0 in the subprocess so both vanilla and SD passes share the same
+    # engine and the speedup ratio stays apples-to-apples. Must be set before
+    # any `import vllm` in this process.
+    os.environ["VLLM_USE_V1"] = "0"
+
     try:
         # Log capture must be attached BEFORE creating LLM so early lines aren't lost.
         log_handler = _attach_spec_log_capture() if capture_spec_stats else None
