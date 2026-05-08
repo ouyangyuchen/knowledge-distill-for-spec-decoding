@@ -24,7 +24,7 @@ gpu_memory_utilization: 0.6
 max_model_len: 4096
 tensor_parallel_size: 1
 enforce_eager: false
-dtype: float16
+dtype: bfloat16
 
 # n-gram (prompt-lookup) speculator: no draft model, no vocab constraint.
 ngram: false

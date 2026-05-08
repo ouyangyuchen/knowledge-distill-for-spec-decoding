@@ -260,9 +260,26 @@ def _build_sd_llm(args_dict: dict):
         float(args_dict["gpu_memory_utilization"]),
         headroom_gib=2.0 if not args_dict["ngram"] else 1.0,
     )
+
+    # vLLM 0.11 collapsed the old spec-decode kwargs (`speculative_model`,
+    # `num_speculative_tokens`, `ngram_prompt_lookup_*`) into a single
+    # `speculative_config` dict.
+    if args_dict["ngram"]:
+        speculative_config: dict = {
+            "method": "ngram",
+            "num_speculative_tokens": int(args_dict["gamma"]),
+            "prompt_lookup_max": int(args_dict["ngram_prompt_lookup_max"]),
+            "prompt_lookup_min": int(args_dict["ngram_prompt_lookup_min"]),
+        }
+    else:
+        speculative_config = {
+            "model": args_dict["draft"],
+            "num_speculative_tokens": int(args_dict["gamma"]),
+        }
+
     kwargs: dict = dict(
         model=args_dict["target"],
-        num_speculative_tokens=args_dict["gamma"],
+        speculative_config=speculative_config,
         dtype=args_dict["dtype"],
         gpu_memory_utilization=gmu,
         tensor_parallel_size=args_dict["tensor_parallel_size"],
@@ -270,21 +287,15 @@ def _build_sd_llm(args_dict: dict):
         max_model_len=args_dict["max_model_len"],
         **_COMMON_LLM_KWARGS,
     )
-    if args_dict["ngram"]:
-        kwargs["speculative_model"] = "[ngram]"
-        kwargs["ngram_prompt_lookup_max"] = args_dict["ngram_prompt_lookup_max"]
-        kwargs["ngram_prompt_lookup_min"] = args_dict["ngram_prompt_lookup_min"]
-    else:
-        kwargs["speculative_model"] = args_dict["draft"]
 
     try:
         return LLM(**kwargs)
-    except AssertionError as e:
-        # vLLM 0.7.3 raises AssertionError when target/draft lm_head vocabs
-        # disagree (the rejection sampler op-erates on logits). Surface a
-        # readable error pointing at the actionable fix.
+    except (AssertionError, ValueError) as e:
+        # vLLM raises when target/draft lm_head vocabs disagree (the rejection
+        # sampler operates on logits). Surface a readable error pointing at the
+        # actionable fix.
         tb = traceback.format_exc()
-        if "_vocab_size" in tb or "spec_decode_worker" in tb:
+        if "_vocab_size" in tb or "spec_decode" in tb or "vocab_size" in tb:
             raise RuntimeError(
                 "vLLM rejected this draft+target pair: lm_head vocab sizes differ.\n"
                 f"  target = {args_dict['target']}\n"

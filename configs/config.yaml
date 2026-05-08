@@ -46,7 +46,7 @@ results_dir: results/${run_name}
 # inside the pod and to ~/.cache/huggingface elsewhere. Resolved into HF_HOME
 # *before* we import transformers/huggingface_hub, so it must be set via
 # Hydra config (not just os.environ at runtime).
-hf_cache: ${oc.env:HF_HOME,~/.cache/huggingface}
+hf_cache: ${oc.env:HF_HOME,'~/.cache/huggingface'}
 
 # Hydra also writes its own per-job log/output directory. Keep it under cwd
 # so the artefacts stay co-located with results_dir under /scratch/<repo>.
