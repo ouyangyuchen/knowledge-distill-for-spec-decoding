@@ -113,7 +113,7 @@ def main() -> None:
                     help="Cap context length to keep KV cache small")
     ap.add_argument("--enforce-eager", action="store_true",
                     help="Disable CUDA graphs (lower mem, slower)")
-    ap.add_argument("--hf-cache", default=None, help="Override HF_HOME (useful on SLURM)")
+    ap.add_argument("--hf-cache", default=None, help="Override HF_HOME (e.g. /scratch/hf_cache on RunAI)")
     args = ap.parse_args()
 
     if not args.ngram and args.draft is None:

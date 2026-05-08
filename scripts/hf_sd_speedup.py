@@ -90,7 +90,7 @@ def main() -> None:
     ap.add_argument("--n-warmup", type=int, default=2, help="Warmup runs before timing")
     ap.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--hf-cache", default=None, help="Override HF_HOME (useful on SLURM scratch)")
+    ap.add_argument("--hf-cache", default=None, help="Override HF_HOME (e.g. /scratch/hf_cache on RunAI)")
     args = ap.parse_args()
 
     dtype ={"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[args.dtype]

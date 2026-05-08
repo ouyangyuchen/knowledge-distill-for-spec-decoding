@@ -24,8 +24,10 @@ FP16/BF16 friendly.
   Dev deps: `pytest`, `ruff`, `pre-commit`.
 - HF auth: set `HF_TOKEN` in the environment (or `huggingface-cli login`). Models
   cache under `~/.cache/huggingface` by default; override with `HF_HOME`.
-- GPU target: a single A100/H100 SLURM node, `bf16` preferred (fp16 fallback for
-  V100-class hardware).
+- GPU target: 1× 40GB A100 on the EPFL RCP RunAI cluster (course cap),
+  `bf16` preferred. The course image (`registry.rcp.epfl.ch/course-cs-552/base-vllm:v1`)
+  ships torch 2.8 + cu128, transformers 4.57, vLLM 0.11, and JupyterLab 4.5.
+  See `rcp_support/README.md` for cluster setup, submission, and storage layout.
 
 Bootstrap:
 
@@ -36,7 +38,9 @@ uv run python -c "import torch; print(torch.cuda.is_available())"
 
 **Local dev policy.** Mac/Windows hosts are for code editing and **unit tests only**
 (`uv run pytest -q`). No model inference, training, or evaluation runs locally — all
-of those go through SLURM.
+of those go through RunAI on the EPFL RCP cluster. See `rcp_support/README.md` for
+cluster setup, and `notebooks/run_eval_pipeline.ipynb` for the interactive eval
+driver.
 
 ---
 
@@ -138,20 +142,23 @@ cs552-mnlp-project/
 │   ├── hf_sd_speedup.py          # standalone HF SD speedup probe
 │   ├── vllm_sd_speedup.py        # standalone vLLM SD speedup probe
 │   ├── runtime_sweep.py
-│   ├── aggregate_results.py
-│   └── slurm/
-│       ├── train.slurm
-│       ├── eval.slurm
-│       ├── target_gen.slurm
-│       ├── runtime_sweep.slurm
-│       └── submit_array.sh
+│   └── aggregate_results.py
 ├── tests/
 │   ├── __init__.py
 │   ├── test_losses.py
 │   ├── test_data.py
 │   ├── test_eval_schema.py
 │   └── test_config_compose.py
-├── notebooks/
+├── notebooks/                    # RunAI deliverable layout
+│   ├── submit.sh                 # team-wide Jupyter launcher (copy of rcp_support/submit.sh)
+│   ├── run_eval_pipeline.ipynb   # interactive driver for scripts/evaluate_sd.py
+│   └── <first>_<last>_<sciper>.ipynb  # one per teammate (deliverable)
+├── rcp_support/                  # upstream RunAI / RCP starter (do not modify)
+│   ├── README.md                 # canonical cluster guide
+│   ├── submit.sh                 # interactive Jupyter starter
+│   ├── submit_train.sh           # non-interactive training-job starter
+│   ├── Dockerfile                # optional custom-image template
+│   └── build.sh                  # optional Harbor push helper
 └── (gitignored) data/, checkpoints/, results/, wandb/
 ```
 
@@ -410,7 +417,10 @@ results_dir: results/${run_name}
 hf_cache: ${oc.env:HF_HOME,~/.cache/huggingface}
 ```
 
-Every ablation is one CLI flip:
+Every ablation is one CLI flip. All commands run **inside the RunAI pod**
+— either from a Jupyter terminal, `runai bash <job>`, or as the
+`TRAIN_COMMAND` of `rcp_support/submit_train.sh` for unattended runs. From
+your laptop, launch the pod with `notebooks/submit.sh` (see `rcp_support/`).
 
 | Ablation              | Command                                                                 |
 |-----------------------|-------------------------------------------------------------------------|
@@ -420,7 +430,7 @@ Every ablation is one CLI flip:
 | Runtime sweep         | `python scripts/runtime_sweep.py runtime=sweep draft=checkpoints/<best>/model` |
 | Multi-benchmark eval  | `python scripts/evaluate_sd.py benchmark=full draft=...`                 |
 | HF-only timing (no vLLM) | `python scripts/evaluate_sd.py engine=hf speedup=hf draft=...`        |
-| Two-phase eval (HF + vLLM) | `python scripts/run_eval_pipeline.py draft=...`                     |
+| Two-phase eval (HF + vLLM) | `python scripts/run_eval_pipeline.py draft=...` (or `notebooks/run_eval_pipeline.ipynb`) |
 
 ---
 
@@ -460,7 +470,12 @@ Writes `checkpoints/kd_jsd_50k_targetgen_a0.5/{model,config.yaml,meta.json}`.
 ### Step 3: Evaluate
 
 The eval is split into two phases that must run in **separate processes**
-(vLLM cannot share a CUDA context with HF). The orchestrator drives both:
+(vLLM cannot share a CUDA context with HF). On RunAI, the **primary flow is
+the notebook** `notebooks/run_eval_pipeline.ipynb`, which mirrors the
+script's subprocess split and reads the merged `eval_summary.json` inline.
+
+Headless / unattended use (e.g. `runai bash` or
+`rcp_support/submit_train.sh`) keeps the equivalent CLI:
 
 ```bash
 uv run python scripts/run_eval_pipeline.py \
@@ -468,12 +483,12 @@ uv run python scripts/run_eval_pipeline.py \
   eval=default benchmark=default
 ```
 
-This runs `evaluate_sd.py engine=hf` (instrumented HF loop → produces
-`acceptance_rate`, `accepted_lens`, generations, an HF-side speedup) followed
-by `evaluate_sd.py engine=vllm` (vLLM vanilla + SD passes in spawn
-subprocesses → overwrites top-level `sd_time_s` / `vanilla_time_s` /
-`speedup` / `tokens_per_second` in the same `eval_summary.json` and adds an
-`engines.vllm` block). End artefacts:
+Either path runs `evaluate_sd.py engine=hf` (instrumented HF loop →
+produces `acceptance_rate`, `accepted_lens`, generations, an HF-side
+speedup) followed by `evaluate_sd.py engine=vllm` (vLLM vanilla + SD passes
+in spawn subprocesses → overwrites top-level `sd_time_s` /
+`vanilla_time_s` / `speedup` / `tokens_per_second` in the same
+`eval_summary.json` and adds an `engines.vllm` block). End artefacts:
 `results/kd_jsd_50k_targetgen_a0.5/{eval_summary.json,generations.jsonl,timing.json}`.
 
 If vLLM is not viable (mismatched draft/target vocab without `ngram=true`,
@@ -490,7 +505,8 @@ including a fresh vanilla baseline measured in the same job.
 
 Skip individual phases via the orchestrator: `--skip-hf` (uses an existing
 `eval_summary.json` and only re-runs vLLM) or `--skip-vllm` (HF metrics
-only).
+only). The notebook supports the same by simply not executing one of the
+two phase cells.
 
 ### Step 4: Runtime sweep
 
@@ -514,20 +530,48 @@ per `quality_score.<benchmark>`.
 
 ---
 
-## SLURM Templates
+## Cluster: RunAI / RCP
 
-`scripts/slurm/train.slurm` is parameterised via env vars:
+The project runs on the EPFL RCP RunAI cluster. `rcp_support/README.md` is
+the canonical guide (one-time setup, port-forwarding, GPU etiquette,
+storage). Two submission paths:
+
+**Interactive Jupyter (primary, also the deliverable launcher).** From the
+laptop:
 
 ```bash
-sbatch --export=ALL,RUN_NAME=kd_fkl_50k,LOSS=fkl,DATA=ultrachat_50k \
-       scripts/slurm/train.slurm
+./notebooks/submit.sh           # default suffix "lab"
+./notebooks/submit.sh exp1      # custom job-name suffix
+runai port-forward <job-name> --port 8888:8888
+# open http://localhost:8888  (token: cs552)
 ```
 
-The job runs `uv run python scripts/train.py loss=$LOSS data=$DATA run_name=$RUN_NAME`.
-Same pattern for `eval.slurm`, `target_gen.slurm`, `runtime_sweep.slurm`. Hydra's
-multirun (`-m`) maps cleanly to SLURM array jobs — `submit_array.sh` expands a
-comma-separated value list into `--array=0-N` and indexes into the values inside the
-job script.
+This is a copy of `rcp_support/submit.sh` placed at the path the rcp_support
+README mandates for the deliverable. It mounts `/scratch` (group PVC),
+`/shared-ro`, `/shared-rw`, sets `HF_HOME=/scratch/hf_cache` and
+`HF_HUB_ENABLE_HF_TRANSFER=1`, and starts JupyterLab in `/scratch`. Edit
+`GASPAR` for your own runs and `GROUP` for your team — the
+submitted file may keep `GASPAR="gaspar"` (TAs replace), but `GROUP` must be
+correct because it selects your team's scratch PVC.
+
+**Non-interactive training job.** For long runs that should execute a command
+and exit, use `rcp_support/submit_train.sh` (do **not** submit it as a
+deliverable). Set `TRAIN_COMMAND`, e.g. for an unattended eval:
+
+```bash
+TRAIN_COMMAND='cd /scratch/<repo> && uv run python scripts/run_eval_pipeline.py \
+  run_name=kd_jsd_50k draft=checkpoints/kd_jsd_50k/model'
+./rcp_support/submit_train.sh
+```
+
+Training jobs are lower priority than interactive jobs and can be preempted —
+write checkpoints to `/scratch` and resume from them.
+
+**Storage contract.** Code lives in the git repo (cloned under `/scratch/`
+inside the pod). HF cache and wandb logs live under `/scratch/hf_cache`
+and `/scratch/wandb`. Deliverable notebooks must run from a clean clone of
+the repo plus the course/group PVCs — no dependence on personal home or
+ad-hoc files in `/scratch`. Anything in `/scratch` is wiped end of July 2026.
 
 ---
 
@@ -556,7 +600,9 @@ have a stable contract to call:
 9. `src/kdsd/eval/benchmarks/{judge_gpt4,mt_bench}.py`.
 10. `scripts/runtime_sweep.py`, `scripts/aggregate_results.py`.
 11. `configs/**` — fill once `src/` is stable, then add ablation YAMLs cheaply.
-12. `scripts/slurm/*.slurm` last, after the Python entrypoints work.
+12. `notebooks/{submit.sh, run_eval_pipeline.ipynb}` last, after the Python
+    entrypoints work. `rcp_support/` is provided upstream — do not modify;
+    `notebooks/submit.sh` is a verbatim copy with `GROUP` filled in.
 
 External libraries leaned on rather than reimplemented:
 
@@ -591,12 +637,23 @@ Required passing tests:
 
 **Cluster — end-to-end smoke (one short job, ~10 min on A100).**
 
+From the laptop, launch the interactive pod:
+
 ```bash
-sbatch --export=ALL,RUN_NAME=smoke,LOSS=fkl,DATA=ultrachat_10k \
-  scripts/slurm/train.slurm
-sbatch --export=ALL,RUN_NAME=smoke,DRAFT=checkpoints/smoke/model \
-  scripts/slurm/eval.slurm
+./notebooks/submit.sh smoke
+runai port-forward <job-name> --port 8888:8888
 ```
+
+Inside Jupyter (token `cs552`), in a Jupyter terminal under
+`/scratch/<repo>`:
+
+```bash
+uv run python scripts/train.py run_name=smoke loss=fkl data=ultrachat_10k
+```
+
+Then open `notebooks/run_eval_pipeline.ipynb`, set
+`RUN_NAME=smoke`, `DRAFT=checkpoints/smoke/model`, `Run All`. Delete the
+job afterwards: `runai delete job <job-name>`.
 
 Smoke acceptance:
 

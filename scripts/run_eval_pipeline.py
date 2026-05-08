@@ -19,6 +19,10 @@ Usage:
         prompts.jsonl=data/processed/eval.jsonl prompts.limit=20
 
 Skip a phase with --skip-hf or --skip-vllm (runs only the other one).
+
+For interactive use on RunAI, prefer `notebooks/run_eval_pipeline.ipynb`,
+which drives the same two phases via subprocess and reads the merged
+eval_summary.json inline.
 """
 
 from __future__ import annotations

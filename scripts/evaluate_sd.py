@@ -26,8 +26,8 @@ Override anything from the CLI, e.g.:
         runtime.gamma=4 runtime.max_new_tokens=128 \\
         run_name=spec_smoke
 
-The HF cache directory comes from `cfg.hf_cache` (defaults to per-user scratch
-on the SLURM cluster). It is exported into HF_HOME before transformers is
+The HF cache directory comes from `cfg.hf_cache` (defaults to /scratch/hf_cache
+on the RunAI pod). It is exported into HF_HOME before transformers is
 imported, since huggingface_hub reads HF_HOME at import time.
 """
 
