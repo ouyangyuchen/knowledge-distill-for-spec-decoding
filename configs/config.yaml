@@ -1,12 +1,16 @@
 defaults:
   - model: qwen25
+  - data: ultrachat_50k
+  - loss: fkl
+  - train: default
   - eval: default
   - runtime: default
   - benchmark: default
   - _self_
 
-run_name: vanilla
+run_name: auto
 seed: 42
+output_dir: checkpoints/${run_name}
 
 # Optional path (local checkpoint dir) or HF id for the draft model. If null,
 # evaluation runs vanilla (target-only) inference and reports speedup=1.0.
@@ -29,6 +33,11 @@ prompts:
 # and TAs through the group scratch mount. Anything under /scratch is wiped
 # end of July 2026.
 results_dir: /scratch/cs552-results/${run_name}
+
+# Heavy data artifacts live on the group scratch PVC. Processed text JSONL is
+# canonical; tokenized caches are disposable and fingerprinted by tokenizer and
+# preprocessing policy.
+data_root: /scratch/cs552-data
 
 # Where HF should cache models/datasets. notebooks/submit.sh exports
 # HF_HOME=/scratch/hf_cache on the RunAI pod, so this resolves to that path
