@@ -8,7 +8,7 @@ points at the RunAI group scratch PVC per rcp_support/README.md).
 
 Override anything from the CLI, e.g.:
 
-    uv run python scripts/evaluate_sd.py \\
+    python scripts/evaluate_sd.py \\
         draft=Qwen/Qwen2.5-0.5B-Instruct \\
         prompts.jsonl=data/processed/eval.jsonl \\
         prompts.limit=20 \\

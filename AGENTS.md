@@ -23,8 +23,11 @@ removed draft-model SD; only ngram/EAGLE/Medusa/MTP remain).
 ## Stack & Environment
 
 - **Python 3.11**, `torch>=2.4`, `transformers>=4.45` (Qwen2.5 support).
-- **`uv`** is the only dependency manager. `pyproject.toml` + committed `uv.lock` are
-  the single source of truth — do not introduce `requirements.txt`.
+- **`uv`** is the local dependency manager for development and unit tests.
+  `pyproject.toml` + committed `uv.lock` are the single source of truth — do
+  not introduce `requirements.txt`. Experiment commands run inside the RunAI pod
+  with the pod's Python environment directly (`python scripts/...`), not
+  `uv run`.
 - Core deps: `torch`, `transformers>=4.45`, `accelerate`, `datasets`, `peft`
   (optional LoRA path), `hydra-core`, `omegaconf`, `wandb` (optional, gated by env
   var), `jsonlines`, `rich`, `numpy`, `tqdm`, `safetensors`.
@@ -36,18 +39,24 @@ removed draft-model SD; only ngram/EAGLE/Medusa/MTP remain).
   ships torch 2.8 + cu128, transformers 4.57, and JupyterLab 4.5.
   See `rcp_support/README.md` for cluster setup, submission, and storage layout.
 
-Bootstrap:
+Local unit-test bootstrap:
 
 ```bash
 uv sync
-uv run python -c "import torch; print(torch.cuda.is_available())"
+uv run pytest -q
+```
+
+RunAI pod sanity check (inside `runai bash <job-name>` or a Jupyter terminal):
+
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
 ```
 
 **Local dev policy.** Mac/Windows hosts are for code editing and **unit tests only**
-(`uv run pytest -q`). No model inference, training, or evaluation runs locally — all
-of those go through RunAI on the EPFL RCP cluster. See `rcp_support/README.md` for
-cluster setup, and `notebooks/run_eval_pipeline.ipynb` for the interactive eval
-driver.
+(`uv sync`, then `uv run pytest -q`). No model inference, training, data
+preparation, or evaluation runs locally — all of those go through RunAI on the
+EPFL RCP cluster. See `rcp_support/README.md` for cluster setup, and
+`notebooks/run_eval_pipeline.ipynb` for the interactive eval driver.
 
 ---
 
@@ -285,7 +294,7 @@ which is what the attribution table cares about.
 Run an eval:
 
 ```bash
-uv run python scripts/evaluate_sd.py \
+python scripts/evaluate_sd.py \
     run_name=spec_smoke draft=Qwen/Qwen2.5-0.5B-Instruct \
     prompts.jsonl=data/processed/eval.jsonl prompts.limit=20
 ```
@@ -378,9 +387,10 @@ hf_cache: ${oc.env:HF_HOME,'~/.cache/huggingface'}
 ```
 
 Every ablation is one CLI flip. All commands run **inside the RunAI pod**
-— either from a Jupyter terminal, `runai bash <job>`, or as the
-`TRAIN_COMMAND` of `rcp_support/submit_train.sh` for unattended runs. From
-your laptop, launch the pod with `notebooks/submit.sh` (see `rcp_support/`).
+with plain `python` — either from a Jupyter terminal, `runai bash <job>`, or
+as the `TRAIN_COMMAND` of `rcp_support/submit_train.sh` for unattended runs.
+From your laptop, launch the pod with `notebooks/submit.sh` (see
+`rcp_support/`).
 
 | Ablation              | Command                                                                 |
 |-----------------------|-------------------------------------------------------------------------|
@@ -395,18 +405,28 @@ your laptop, launch the pod with `notebooks/submit.sh` (see `rcp_support/`).
 
 ## Pipeline — End-to-End
 
-### Step 0: Bootstrap
+### Step 0: Launch / attach to the RunAI pod
+
+From the laptop:
 
 ```bash
-uv sync
-uv run huggingface-cli login   # store HF_TOKEN
+./notebooks/submit.sh exp1
+runai bash <job-name>
+```
+
+Inside the pod, from the repo clone under `/scratch`:
+
+```bash
+cd /scratch/<repo>
+huggingface-cli login   # store HF_TOKEN
+python -c "import torch; print(torch.cuda.is_available())"
 ```
 
 ### Step 1: Data
 
 ```bash
-uv run python scripts/prepare_data.py data=ultrachat_50k
-uv run python scripts/generate_target_responses.py data=ultrachat_50k    # optional arm
+python scripts/prepare_data.py data=ultrachat_50k
+python scripts/generate_target_responses.py data=ultrachat_50k    # optional arm
 ```
 
 Writes:
@@ -418,7 +438,7 @@ Writes:
 ### Step 2: Train
 
 ```bash
-uv run python scripts/train.py loss=jsd data=ultrachat_50k_target_gen \
+python scripts/train.py loss=jsd data=ultrachat_50k_target_gen \
   train.steps=4000 train.alpha=0.5 train.temperature=1.0 \
   run_name=kd_jsd_50k_targetgen_a0.5
 ```
@@ -435,7 +455,7 @@ Headless / unattended use (e.g. `runai bash` or
 `rcp_support/submit_train.sh`) keeps the equivalent CLI:
 
 ```bash
-uv run python scripts/evaluate_sd.py \
+python scripts/evaluate_sd.py \
   draft=checkpoints/kd_jsd_50k_targetgen_a0.5/model \
   eval=default benchmark=default
 ```
@@ -446,7 +466,7 @@ End artefacts:
 ### Step 4: Runtime sweep
 
 ```bash
-uv run python scripts/runtime_sweep.py \
+python scripts/runtime_sweep.py \
   draft=checkpoints/<best>/model runtime=sweep
 ```
 
@@ -456,7 +476,7 @@ Iterates `gamma ∈ {1,2,4,6,8}` × `max_new ∈ {128,256}`, writing one
 ### Step 5: Aggregate
 
 ```bash
-uv run python scripts/aggregate_results.py /scratch/cs552-results/ \
+python scripts/aggregate_results.py /scratch/cs552-results/ \
   -o report/attribution_table.md
 ```
 
@@ -495,7 +515,7 @@ and exit, use `rcp_support/submit_train.sh` (do **not** submit it as a
 deliverable). Set `TRAIN_COMMAND`, e.g. for an unattended eval:
 
 ```bash
-TRAIN_COMMAND='cd /scratch/<repo> && uv run python scripts/evaluate_sd.py \
+TRAIN_COMMAND='cd /scratch/<repo> && python scripts/evaluate_sd.py \
   run_name=kd_jsd_50k draft=checkpoints/kd_jsd_50k/model'
 ./rcp_support/submit_train.sh
 ```
@@ -583,7 +603,7 @@ Inside Jupyter (token `cs552`), in a Jupyter terminal under
 `/scratch/<repo>`:
 
 ```bash
-uv run python scripts/train.py run_name=smoke loss=fkl data=ultrachat_10k
+python scripts/train.py run_name=smoke loss=fkl data=ultrachat_10k
 ```
 
 Then open `notebooks/run_eval_pipeline.ipynb`, set
