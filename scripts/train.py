@@ -90,20 +90,24 @@ def _run(cfg: DictConfig) -> None:
         if hasattr(draft, "config"):
             draft.config.use_cache = False
 
-    log.info("Loading frozen target=%s", cfg.model.target)
-    target = AutoModelForCausalLM.from_pretrained(
-        str(cfg.model.target),
-        dtype=dtype,
-        attn_implementation=str(cfg.model.attn_impl),
-        trust_remote_code=bool(cfg.model.trust_remote_code),
-    ).to(device)
-    target.eval().requires_grad_(False)
-    if bool(cfg.train.compile_target):
-        if torch.cuda.is_available() and hasattr(torch, "compile"):
-            log.info("Compiling target with torch.compile(mode='reduce-overhead')")
-            target = torch.compile(target, mode="reduce-overhead")
-        else:
-            log.warning("train.compile_target=true ignored because CUDA/torch.compile is unavailable")
+    target = None
+    if str(cfg.loss.kind).lower() != "ce":
+        log.info("Loading frozen target=%s", cfg.model.target)
+        target = AutoModelForCausalLM.from_pretrained(
+            str(cfg.model.target),
+            dtype=dtype,
+            attn_implementation=str(cfg.model.attn_impl),
+            trust_remote_code=bool(cfg.model.trust_remote_code),
+        ).to(device)
+        target.eval().requires_grad_(False)
+        if bool(cfg.train.compile_target):
+            if torch.cuda.is_available() and hasattr(torch, "compile"):
+                log.info("Compiling target with torch.compile(mode='reduce-overhead')")
+                target = torch.compile(target, mode="reduce-overhead")
+            else:
+                log.warning("train.compile_target=true ignored because CUDA/torch.compile is unavailable")
+    else:
+        log.info("Skipping frozen target load for CE-only training")
 
     train_ds = KDDataset(
         train_path,
@@ -111,6 +115,13 @@ def _run(cfg: DictConfig) -> None:
         max_seq_len=int(cfg.data.max_seq_len),
         cache_dir=str(cfg.data.tokenized_cache_dir),
     )
+    overfit_samples = int(cfg.train.get("overfit_samples", 0) or 0)
+    if overfit_samples > 0:
+        from torch.utils.data import Subset
+
+        n_overfit = min(overfit_samples, len(train_ds))
+        train_ds = Subset(train_ds, list(range(n_overfit)))
+        log.warning("Debug overfit mode: restricted train dataset to %d examples", n_overfit)
     eval_ds = None
     if val_path.exists():
         eval_ds = KDDataset(

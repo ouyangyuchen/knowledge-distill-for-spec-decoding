@@ -24,5 +24,9 @@ remove_unused_columns: false
 report_to_wandb: false
 resume_from_checkpoint: null
 
+# Debug-only: restrict the train split to N examples so max_steps repeatedly
+# revisits a tiny fixed set. Use 0 for normal training.
+overfit_samples: 0
+
 # Frozen target forward options.
 compile_target: false

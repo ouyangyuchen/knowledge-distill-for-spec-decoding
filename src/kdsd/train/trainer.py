@@ -11,10 +11,18 @@ from kdsd.losses import kd_loss
 
 
 class KDTrainer(Trainer):
-    def __init__(self, *args: Any, target_model: torch.nn.Module, kd_cfg: dict, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        target_model: torch.nn.Module | None,
+        kd_cfg: dict,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
-        self.target = target_model.eval().requires_grad_(False)
         self.kd_cfg = dict(kd_cfg)
+        self.target = target_model
+        if self.target is not None:
+            self.target = self.target.eval().requires_grad_(False)
         self._last_loss_parts: dict[str, float] = {}
 
     def compute_loss(
@@ -28,12 +36,16 @@ class KDTrainer(Trainer):
         response_mask = inputs.pop("response_mask", labels.ne(-100))
 
         student_out = model(**inputs)
-        with torch.no_grad():
-            teacher_out = self.target(**inputs)
+        teacher_logits = None
+        if self.kd_cfg["kind"] != "ce":
+            if self.target is None:
+                raise ValueError("target_model is required for KD losses")
+            with torch.no_grad():
+                teacher_logits = self.target(**inputs).logits
 
         loss_parts = kd_loss(
             student_out.logits,
-            teacher_out.logits,
+            teacher_logits,
             None,
             None,
             labels,
