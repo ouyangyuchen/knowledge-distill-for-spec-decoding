@@ -21,7 +21,7 @@ gradient_checkpointing: true
 dataloader_drop_last: true
 dataloader_num_workers: 2
 remove_unused_columns: false
-report_to_wandb: false
+report_to_wandb: true
 resume_from_checkpoint: null
 
 # Debug-only: restrict the train split to N examples so max_steps repeatedly
