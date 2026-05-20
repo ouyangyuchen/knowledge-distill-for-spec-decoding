@@ -23,7 +23,12 @@ class KDTrainer(Trainer):
         self.target = target_model
         if self.target is not None:
             self.target = self.target.eval().requires_grad_(False)
-        self._last_loss_parts: dict[str, float] = {}
+        # Qwen forwards accept **kwargs, so HF Trainer assumes the model/loss
+        # handles num_items_in_batch normalization itself. Our custom loss is
+        # already a per-token mean, so keep Trainer's standard GA scaling.
+        self.model_accepts_loss_kwargs = False
+        self._loss_part_sums: dict[str, float] = {"loss_ce": 0.0, "loss_kd": 0.0}
+        self._loss_part_count = 0
 
     def compute_loss(
         self,
@@ -54,15 +59,23 @@ class KDTrainer(Trainer):
             alpha=float(self.kd_cfg.get("alpha", 0.5)),
             loss_mask=response_mask,
         )
-        self._last_loss_parts = {
-            "loss_ce": float(loss_parts["ce"].detach().cpu()),
-            "loss_kd": float(loss_parts["kd"].detach().cpu()),
-        }
+        if model.training:
+            self._loss_part_sums["loss_ce"] += float(loss_parts["ce"].detach().cpu())
+            self._loss_part_sums["loss_kd"] += float(loss_parts["kd"].detach().cpu())
+            self._loss_part_count += 1
         if return_outputs:
             return loss_parts["loss"], student_out
         return loss_parts["loss"]
 
     def log(self, logs: dict[str, float], *args: Any, **kwargs: Any) -> None:
-        if self._last_loss_parts:
-            logs = {**logs, **self._last_loss_parts}
+        if "loss" in logs and self._loss_part_count > 0:
+            logs = {
+                **logs,
+                **{
+                    k: v / self._loss_part_count
+                    for k, v in self._loss_part_sums.items()
+                },
+            }
+            self._loss_part_sums = {"loss_ce": 0.0, "loss_kd": 0.0}
+            self._loss_part_count = 0
         super().log(logs, *args, **kwargs)
