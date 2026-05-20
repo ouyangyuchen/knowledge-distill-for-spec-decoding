@@ -1,31 +1,24 @@
 #!/bin/bash
-# CS-552 — example Run:AI training job launcher.
+# CS-552 — Run:AI training job launcher.
 #
-# This is NOT a deliverable script. It is a helper/example for longer
-# compute runs where you want the job to execute a training command and
-# exit when the command finishes.
-#
-# For grading, submit the interactive submit.sh next to your notebook.
-# Use this file only as a starting point for your own training runs.
-#
-# Training jobs are lower priority than interactive jobs and can be
-# preempted/restarted by the scheduler. Your code must write checkpoints
-# to /scratch and resume from them.
+# This is NOT a deliverable script. It is a helper for longer compute runs
+# where you want the job to refresh source code, execute a command, and exit.
+# Training jobs can be preempted, so checkpoints and caches must live outside
+# the source checkout under /scratch.
 
 set -euo pipefail
 
 # ============== EDIT THESE LINES ==============
-RUN_NAME="${RUN_NAME:-debug_ce_overfit}"  # <-- A name for this training run, used in W&B and output dirs.
-GASPAR="${GASPAR:-gaspar}"               # <-- YOUR GASPAR EPFL username.
-GROUP="${GROUP:-g67}"                     # <-- YOUR TEAM, e.g. g07.
-WANDB_MODE="${WANDB_MODE:-offline}"       # <-- Optional: W&B mode (online, offline, or disabled).
+RUN_NAME="${RUN_NAME:-debug_fkl_overfit}"  # Used in W&B and the default Hydra run_name override.
+GASPAR="${GASPAR:-gaspar}"               # YOUR GASPAR EPFL username.
+GROUP="${GROUP:-g67}"                     # YOUR TEAM, e.g. g07.
+WANDB_MODE="${WANDB_MODE:-online}"       # online, offline, or disabled.
 
-# Public source checkout. Each training job fetches this branch and resets the
-# checkout before running RUN_COMMAND, so new remote code is picked up without
-# manually entering the pod.
+# Public source checkout. Each job fetches this branch and resets the checkout
+# before running RUN_COMMAND, so new remote code is picked up automatically.
 REPO_URL="${REPO_URL:-https://github.com/ouyangyuchen/knowledge-distill-for-spec-decoding.git}"
 REPO_BRANCH="${REPO_BRANCH:-train}"
-REPO_DIR="${REPO_DIR:-/scratch/cs552-repos/cs552-kdsd-src-${GASPAR}}"  # <-- The repo is cloned here and RUN_COMMAND runs from this dir.
+REPO_DIR="${REPO_DIR:-/scratch/cs552-repos/cs552-kdsd-${GASPAR}}"
 
 # Persistent artifact locations outside the managed source checkout.
 CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-/scratch/cs552-checkpoints}"
@@ -35,7 +28,8 @@ WANDB_DIR="${WANDB_DIR:-/scratch/wandb}"
 
 # Edit this for your project. The command runs from REPO_DIR after checkout.
 RUN_COMMAND="${RUN_COMMAND:-python scripts/train.py \
-  loss=ce data=ultrachat_10k \
+  loss=fkl data=ultrachat_10k \
+  loss.alpha=1.0 \
   train.overfit_samples=16 \
   train.max_steps=300 \
   train.learning_rate=1e-4 \
@@ -43,7 +37,7 @@ RUN_COMMAND="${RUN_COMMAND:-python scripts/train.py \
   train.warmup_ratio=0 \
   train.per_device_train_batch_size=1 \
   train.gradient_accumulation_steps=1 \
-  run_name=${RUN_NAME}
+  run_name=debug_fkl_overfit16
 }"
 # ==============================================
 
@@ -72,7 +66,7 @@ if [[ "${WANDB_MODE}" == "online" && -z "${WANDB_API_KEY:-}" ]]; then
     exit 1
 fi
 
-# Keep multiline shell payloads safe when they are passed through the Run:AI CLI.
+# Keep multiline shell payloads safe when they pass through the Run:AI CLI.
 RUN_COMMAND_B64="$(printf '%s' "${RUN_COMMAND}" | base64 | tr -d '\n')"
 
 GPUS=1
@@ -127,6 +121,24 @@ if command -v python3 >/dev/null 2>&1; then
   ln -sf "$(command -v python3)" /usr/local/bin/python 2>/dev/null || true
 fi
 
+configure_git_safe_directory() {
+  # RCP /scratch is a shared PVC, so Git may reject repos there as "dubious
+  # ownership". Configure only this managed checkout path as safe, and also set
+  # env-based config so later Git commands work even if --global cannot write.
+  export GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-0}"
+  local idx="${GIT_CONFIG_COUNT}"
+  export "GIT_CONFIG_KEY_${idx}=safe.directory"
+  export "GIT_CONFIG_VALUE_${idx}=${REPO_DIR}"
+  export GIT_CONFIG_COUNT="$((idx + 1))"
+
+  if git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "${REPO_DIR}"; then
+    return
+  fi
+  git config --global --add safe.directory "${REPO_DIR}" 2>/dev/null || true
+}
+
+configure_git_safe_directory
+
 echo ">>> Checking git access to ${REPO_URL} branch ${REPO_BRANCH}"
 if ! git ls-remote --exit-code --heads "${REPO_URL}" "${REPO_BRANCH}" >/dev/null; then
   echo "ERROR: Could not read branch '${REPO_BRANCH}' from ${REPO_URL}." >&2
@@ -135,10 +147,17 @@ if ! git ls-remote --exit-code --heads "${REPO_URL}" "${REPO_BRANCH}" >/dev/null
   exit 1
 fi
 
-if [[ -e "${REPO_DIR}" && ! -d "${REPO_DIR}/.git" ]]; then
-  echo "ERROR: REPO_DIR exists but is not a git checkout: ${REPO_DIR}" >&2
-  echo "Move it aside or choose a different REPO_DIR." >&2
+if [[ -e "${REPO_DIR}" && ! -d "${REPO_DIR}" ]]; then
+  echo "ERROR: REPO_DIR exists but is not a directory: ${REPO_DIR}" >&2
   exit 1
+fi
+
+if [[ -d "${REPO_DIR}" && ! -d "${REPO_DIR}/.git" ]]; then
+  if find "${REPO_DIR}" -mindepth 1 -maxdepth 1 | read -r _; then
+    echo "ERROR: REPO_DIR exists, is not a git checkout, and is not empty: ${REPO_DIR}" >&2
+    echo "Move it aside or choose a different REPO_DIR." >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -d "${REPO_DIR}/.git" ]]; then
@@ -146,16 +165,24 @@ if [[ ! -d "${REPO_DIR}/.git" ]]; then
   git clone --no-checkout --origin origin "${REPO_URL}" "${REPO_DIR}"
 fi
 
-cd "${REPO_DIR}"
+configure_git_safe_directory
 
-current_origin="$(git remote get-url origin 2>/dev/null || true)"
+if ! git -C "${REPO_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "ERROR: ${REPO_DIR} contains .git but Git cannot open it." >&2
+  echo "This can happen after an interrupted clone. Move it aside or choose a different REPO_DIR." >&2
+  exit 1
+fi
+
+current_origin="$(git -C "${REPO_DIR}" remote get-url origin 2>/dev/null || true)"
 if [[ -z "${current_origin}" ]]; then
   echo ">>> Adding origin remote ${REPO_URL}"
-  git remote add origin "${REPO_URL}"
+  git -C "${REPO_DIR}" remote add origin "${REPO_URL}"
 elif [[ "${current_origin}" != "${REPO_URL}" ]]; then
   echo ">>> Updating origin remote from '${current_origin}' to '${REPO_URL}'"
-  git remote set-url origin "${REPO_URL}"
+  git -C "${REPO_DIR}" remote set-url origin "${REPO_URL}"
 fi
+
+cd "${REPO_DIR}"
 
 for artifact in checkpoints data outputs wandb; do
   if [[ -e "${artifact}" && ! -L "${artifact}" ]]; then
