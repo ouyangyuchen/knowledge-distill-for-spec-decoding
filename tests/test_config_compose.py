@@ -15,3 +15,15 @@ def test_advertised_loss_data_combinations_compose():
                 assert cfg.loss.kind == loss
                 assert cfg.data.id == data_name
                 assert cfg.output_dir.startswith("checkpoints/")
+
+
+def test_qwen3_a100_config_composes():
+    config_dir = Path(__file__).resolve().parents[1] / "configs"
+
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        cfg = compose(config_name="config", overrides=["model=qwen3", "train=a100_40gb_qwen3"])
+
+    assert cfg.model.target == "Qwen/Qwen3-14B"
+    assert cfg.model.draft_default == "Qwen/Qwen3-0.6B"
+    assert cfg.train.draft_init == "Qwen/Qwen3-0.6B"
+    assert cfg.train.per_device_train_batch_size == 1
