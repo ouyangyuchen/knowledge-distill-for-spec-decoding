@@ -30,4 +30,4 @@ resume_from_checkpoint: null
 overfit_samples: 0
 
 # Frozen target forward options.
-compile_target: true
+compile_target: false
