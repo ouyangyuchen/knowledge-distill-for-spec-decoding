@@ -29,7 +29,7 @@ SWAP_SPACE="${SWAP_SPACE:-0}"
 ENFORCE_EAGER="${ENFORCE_EAGER:-false}"
 
 REPO_BRANCH="${REPO_BRANCH:-codex/vllm-generate}"
-EXPERIMENT_NAME="${EXPERIMENT_NAME:-cache_target_${MODEL}_${DATA}_seed${SEED}}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-cache_${MODEL}_${DATA}_seed${SEED}}"
 WANDB_MODE="${WANDB_MODE:-disabled}"
 
 TARGET_OVERRIDE=""
@@ -90,4 +90,4 @@ REPO_BRANCH="${REPO_BRANCH}" \
 RUN_NAME="${EXPERIMENT_NAME}" \
 WANDB_MODE="${WANDB_MODE}" \
 RUN_COMMAND="${run_command}" \
-./rcp_support/submit_train.sh "target-cache-${DATA}"
+./rcp_support/submit_train.sh "tcache-${MODEL}"
