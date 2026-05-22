@@ -18,6 +18,7 @@ MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
 KD_CHUNK_SIZE="${KD_CHUNK_SIZE:-128}"
 COMPILE_TARGET="${COMPILE_TARGET:-false}"
 TARGET_ID="${TARGET_ID:-}"
+EVAL_REPORTING_STEPS="${EVAL_REPORTING_STEPS:-100}"
 PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 RUN_EVAL="${RUN_EVAL:-true}"
@@ -55,6 +56,7 @@ done
 
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-qwen3_${DRAFT_TAG}_${DATA}_seed${SEED}}"
 WANDB_GROUP="${WANDB_GROUP:-${EXPERIMENT_NAME}}"
+RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-qwen3_${DRAFT_TAG}}"
 
 target_override=()
 if [[ -n "${TARGET_ID}" ]]; then
@@ -63,6 +65,7 @@ fi
 
 echo ">>> Qwen3 experiment: ${EXPERIMENT_NAME}"
 echo ">>> W&B group: ${WANDB_GROUP}"
+echo ">>> run name prefix: ${RUN_NAME_PREFIX}"
 echo ">>> Losses: ${LOSSES}"
 echo ">>> max_seq_len: ${MAX_SEQ_LEN}"
 echo ">>> max_steps: ${STEPS}"
@@ -72,6 +75,7 @@ echo ">>> gradient accumulation steps: ${GRAD_ACCUM_STEPS}"
 echo ">>> KD chunk size: ${KD_CHUNK_SIZE}"
 echo ">>> compile_target: ${COMPILE_TARGET}"
 echo ">>> target override: ${TARGET_ID:-<config default>}"
+echo ">>> eval reporting steps: ${EVAL_REPORTING_STEPS}"
 echo ">>> run eval after training: ${RUN_EVAL}"
 echo ">>> eval pretrained baseline: ${EVAL_PRETRAINED_BASELINE}"
 echo ">>> eval prompts: ${EVAL_PROMPTS_JSONL}"
@@ -83,7 +87,7 @@ echo ">>> eval warmup/repeats: ${EVAL_WARMUP}/${EVAL_REPEATS}"
 export PYTORCH_CUDA_ALLOC_CONF
 
 for loss in ${LOSSES}; do
-  run_name="qwen3_${DRAFT_TAG}_${loss}_${DATA}_seed${SEED}"
+  run_name="${RUN_NAME_PREFIX}_${loss}_${DATA}_seed${SEED}"
 
   if [[ "${loss}" == "ce" ]]; then
     loss_overrides=("loss=ce")
@@ -105,6 +109,7 @@ for loss in ${LOSSES}; do
     "train.gradient_accumulation_steps=${GRAD_ACCUM_STEPS}" \
     "train.learning_rate=${LR}" \
     "train.compile_target=${COMPILE_TARGET}" \
+    "train.eval_steps=${EVAL_REPORTING_STEPS}" \
     "data.max_seq_len=${MAX_SEQ_LEN}" \
     "loss.chunk_size=${KD_CHUNK_SIZE}" \
     "seed=${SEED}" \
@@ -122,7 +127,7 @@ echo ">>> Training sweep finished; starting SD evaluation"
 eval_result_runs=()
 
 if [[ "${EVAL_PRETRAINED_BASELINE}" == "true" || "${EVAL_PRETRAINED_BASELINE}" == "1" ]]; then
-  baseline_eval_run="qwen3_${DRAFT_TAG}_pretrain_${DATA}_seed${SEED}_eval_g${EVAL_GAMMA}_max${EVAL_MAX_NEW_TOKENS}"
+  baseline_eval_run="${RUN_NAME_PREFIX}_pretrain_${DATA}_seed${SEED}_eval_g${EVAL_GAMMA}_max${EVAL_MAX_NEW_TOKENS}"
   echo ">>> Evaluating pretrained draft baseline: ${baseline_eval_run}"
   python scripts/evaluate_sd.py \
     model=qwen3 "data=${DATA}" "${target_override[@]}" \
@@ -138,7 +143,7 @@ if [[ "${EVAL_PRETRAINED_BASELINE}" == "true" || "${EVAL_PRETRAINED_BASELINE}" =
 fi
 
 for loss in ${LOSSES}; do
-  train_run="qwen3_${DRAFT_TAG}_${loss}_${DATA}_seed${SEED}"
+  train_run="${RUN_NAME_PREFIX}_${loss}_${DATA}_seed${SEED}"
   eval_run="${train_run}_eval_g${EVAL_GAMMA}_max${EVAL_MAX_NEW_TOKENS}"
 
   echo ">>> Evaluating trained draft: ${eval_run}"
