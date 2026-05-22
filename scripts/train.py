@@ -44,6 +44,8 @@ def _run(cfg: DictConfig) -> None:
 
     log = get_logger("kdsd.train")
     run_name = ensure_run_name(cfg)
+    if bool(cfg.train.report_to_wandb):
+        os.environ["WANDB_NAME"] = run_name
     out_dir = resolve_path(str(cfg.output_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -151,6 +153,7 @@ def _run(cfg: DictConfig) -> None:
     OmegaConf.save(cfg, out_dir / "config.yaml")
 
     metrics = result.metrics if result is not None else {}
+    wandb_meta = _wandb_run_metadata(enabled=bool(cfg.train.report_to_wandb))
     write_json(
         out_dir / "meta.json",
         {
@@ -167,6 +170,7 @@ def _run(cfg: DictConfig) -> None:
                 "val_path": str(val_path),
                 "max_seq_len": int(cfg.data.max_seq_len),
             },
+            "wandb": wandb_meta,
         },
     )
     log.info("Wrote checkpoint to %s", out_dir)
@@ -248,6 +252,7 @@ def _training_args(cfg: DictConfig, out_dir: Path, cls, *, do_eval: bool):
     train = cfg.train
     kwargs = {
         "output_dir": str(out_dir / "trainer_state"),
+        "run_name": str(cfg.run_name),
         "per_device_train_batch_size": int(train.per_device_train_batch_size),
         "per_device_eval_batch_size": int(train.per_device_eval_batch_size),
         "gradient_accumulation_steps": int(train.gradient_accumulation_steps),
@@ -284,6 +289,26 @@ def _training_args(cfg: DictConfig, out_dir: Path, cls, *, do_eval: bool):
     elif "no_cuda" in params and str(cfg.model.device) == "cpu":
         kwargs["no_cuda"] = True
     return cls(**kwargs)
+
+
+def _wandb_run_metadata(*, enabled: bool) -> dict[str, str | None]:
+    if not enabled:
+        return {}
+    try:
+        import wandb
+    except Exception:
+        return {}
+
+    run = getattr(wandb, "run", None)
+    if run is None:
+        return {}
+    return {
+        "id": getattr(run, "id", None),
+        "name": getattr(run, "name", None),
+        "project": getattr(run, "project", None),
+        "entity": getattr(run, "entity", None),
+        "url": getattr(run, "url", None),
+    }
 
 
 if __name__ == "__main__":

@@ -46,6 +46,16 @@ data_root: /scratch/cs552-data
 # Hydra config (not just os.environ at runtime).
 hf_cache: ${oc.env:HF_HOME,'~/.cache/huggingface'}
 
+# Optional W&B reporting. Training uses HF Trainer's W&B integration; eval uses
+# this block only when explicitly enabled.
+wandb:
+  enabled: false
+  project: ${oc.env:WANDB_PROJECT,cs552-kdsd}
+  entity: ${oc.env:WANDB_ENTITY,''}
+  dir: ${oc.env:WANDB_DIR,wandb}
+  mode: ${oc.env:WANDB_MODE,online}
+  resume: allow
+
 # Hydra also writes its own per-job log/output directory. Keep it under cwd
 # (the repo clone, typically /scratch/<repo>) so logs sit alongside the code
 # while heavy eval artefacts go to results_dir under /scratch/cs552-results/.
