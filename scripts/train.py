@@ -288,6 +288,21 @@ def _training_args(cfg: DictConfig, out_dir: Path, cls, *, do_eval: bool):
         kwargs["use_cpu"] = True
     elif "no_cuda" in params and str(cfg.model.device) == "cpu":
         kwargs["no_cuda"] = True
+    # Optional best-checkpoint selection (overfit protection). Gated on an eval
+    # set (do_eval), HF support, and explicit config opt-in. HF requires
+    # save_strategy == eval_strategy and save_steps a multiple of eval_steps; both
+    # hold for the run_alpha config (save_steps == eval_steps). When on, the model
+    # restored at the end (and thus saved to <out>/model) is the best-eval one.
+    if (
+        do_eval
+        and "load_best_model_at_end" in params
+        and bool(train.get("load_best_model_at_end", False))
+    ):
+        kwargs["load_best_model_at_end"] = True
+        kwargs["metric_for_best_model"] = str(train.get("metric_for_best_model", "eval_loss"))
+        kwargs["greater_is_better"] = bool(train.get("greater_is_better", False))
+        if "save_strategy" in params:
+            kwargs["save_strategy"] = strategy
     return cls(**kwargs)
 
 
