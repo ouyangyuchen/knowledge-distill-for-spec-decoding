@@ -246,6 +246,7 @@ def _run_target_response_generation(cfg: DictConfig) -> None:
 
 def _training_args(cfg: DictConfig, out_dir: Path, cls, *, do_eval: bool):
     train = cfg.train
+    params = inspect.signature(cls.__init__).parameters
     kwargs = {
         "output_dir": str(out_dir / "trainer_state"),
         "per_device_train_batch_size": int(train.per_device_train_batch_size),
@@ -264,7 +265,7 @@ def _training_args(cfg: DictConfig, out_dir: Path, cls, *, do_eval: bool):
         "dataloader_drop_last": bool(train.dataloader_drop_last),
         "dataloader_num_workers": int(train.dataloader_num_workers),
         "remove_unused_columns": bool(train.remove_unused_columns),
-        "save_safetensors": True,
+        **({"save_safetensors": True} if "save_safetensors" in params else {}),
         "report_to": ["wandb"] if bool(train.report_to_wandb) else [],
         "seed": int(cfg.seed),
     }
@@ -273,7 +274,6 @@ def _training_args(cfg: DictConfig, out_dir: Path, cls, *, do_eval: bool):
     else:
         kwargs["num_train_epochs"] = float(train.num_train_epochs)
 
-    params = inspect.signature(cls.__init__).parameters
     strategy = "steps" if do_eval else "no"
     if "eval_strategy" in params:
         kwargs["eval_strategy"] = strategy
