@@ -9,13 +9,13 @@ __pycache__/
 .uv/
 
 # Project artefacts (never commit)
-data/
-checkpoints/
-results/
-wandb/
-outputs/
-multirun/
-report/
+/data/
+/checkpoints/
+/results/
+/wandb/
+/outputs/
+/multirun/
+/report/
 
 # HF / model caches
 .cache/

@@ -1,0 +1,39 @@
+draft_init: ${model.draft_default}
+
+# HF Trainer arguments. Keep these conservative for a single 40GB A100; override
+# from the CLI for ablations and smoke jobs.
+max_steps: 4000
+num_train_epochs: 1
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-5
+weight_decay: 0.0
+warmup_ratio: 0.03
+lr_scheduler_type: cosine
+logging_steps: 10
+save_steps: 500
+eval_steps: 500
+save_total_limit: 2
+# Best-checkpoint selection (overfit protection). When load_best_model_at_end is
+# true, the model restored at end (and saved to <out>/model) is the best-eval one.
+# HF requires save_steps to be a multiple of eval_steps when this is on.
+load_best_model_at_end: false
+metric_for_best_model: eval_loss
+greater_is_better: false
+save_best_model: false
+bf16: true
+fp16: false
+gradient_checkpointing: true
+dataloader_drop_last: true
+dataloader_num_workers: 2
+remove_unused_columns: false
+report_to_wandb: true
+resume_from_checkpoint: null
+
+# Debug-only: restrict the train split to N examples so max_steps repeatedly
+# revisits a tiny fixed set. Use 0 for normal training.
+overfit_samples: 0
+
+# Frozen target forward options.
+compile_target: false
