@@ -2,7 +2,7 @@
 # CS-552 - Open Project Milestone
 
 Welcome to the milestone submission for the MNLP open project!
-
+Currently, all updates and deliverables are on train branch.
 As detailed in the [open project description](https://docs.google.com/document/d/1NI4UKsasYuFLxOGGzsAweCbW0XOEtc59/edit#heading=h.8ww6fxjeedkw), the milestone submission is a checkpoint to ensure you are making meaningful progress. You should have a working pipeline and initial results by this point.
 
 ## Deliverables
