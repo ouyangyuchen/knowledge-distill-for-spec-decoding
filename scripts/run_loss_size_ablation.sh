@@ -164,7 +164,7 @@ train_loss() {
   fi
 
   log "Training ${run_name} (loss=${loss}, alpha=${alpha}, batch=${batch_size}, grad_accum=${grad_accum}); log=${train_log}"
-  WANDB_NAME="${run_name}" uv run python scripts/train.py \
+  WANDB_NAME="${run_name}" uv run python scripts/train_size.py \
     run_name="${run_name}" \
     output_dir="${CHECKPOINT_ROOT}/${run_name}" \
     loss="${loss}" \
