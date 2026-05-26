@@ -73,11 +73,18 @@ def generate_target_responses(
     return out
 
 
-def _target_generated_row(row: dict[str, Any], text: str) -> dict[str, Any]:
+def _target_generated_row(
+    row: dict[str, Any],
+    text: str,
+    *,
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     next_row = dict(row)
     meta = dict(next_row.get("metadata") or {})
     meta["original_response_text"] = next_row.get("response_text")
     meta["response_generated_at"] = datetime.now(timezone.utc).isoformat()
+    if extra_metadata:
+        meta.update(extra_metadata)
     next_row["response_text"] = text.strip()
     next_row["source"] = "target"
     next_row["metadata"] = meta
@@ -152,6 +159,31 @@ def create_vllm_target_engine(
     return llm, sampling_params
 
 
+def _prepare_vllm_prompt(
+    tokenizer: PreTrainedTokenizerBase,
+    prompt_text: str,
+    *,
+    max_prompt_tokens: int | None,
+) -> tuple[str, dict[str, Any] | None]:
+    prompt = format_prompt(tokenizer, prompt_text)
+    if max_prompt_tokens is None or int(max_prompt_tokens) <= 0:
+        return prompt, None
+
+    tokenized = tokenizer(prompt, add_special_tokens=False)
+    input_ids = list(tokenized["input_ids"])
+    max_prompt_tokens = int(max_prompt_tokens)
+    if len(input_ids) <= max_prompt_tokens:
+        return prompt, None
+
+    kept_ids = input_ids[-max_prompt_tokens:]
+    truncated_prompt = tokenizer.decode(kept_ids, skip_special_tokens=False)
+    return truncated_prompt, {
+        "target_prompt_truncated": True,
+        "target_prompt_tokens_original": len(input_ids),
+        "target_prompt_tokens_used": len(kept_ids),
+    }
+
+
 def generate_target_responses_vllm(
     records: Iterable[dict[str, Any]],
     *,
@@ -170,6 +202,7 @@ def generate_target_responses_vllm(
     gpu_memory_utilization: float = 0.9,
     swap_space: float = 0,
     enforce_eager: bool = False,
+    max_prompt_tokens: int | None = None,
     llm: Any | None = None,
     sampling_params: Any | None = None,
     show_progress: bool = True,
@@ -177,6 +210,8 @@ def generate_target_responses_vllm(
 ) -> list[dict[str, Any]]:
     rows = list(records)
     request_batch_size = max(1, int(request_batch_size))
+    if max_prompt_tokens is None:
+        max_prompt_tokens = max(1, int(max_model_len) - int(max_new_tokens))
     if llm is None or sampling_params is None:
         llm, sampling_params = create_vllm_target_engine(
             model_id=model_id,
@@ -195,6 +230,7 @@ def generate_target_responses_vllm(
         )
 
     out: list[dict[str, Any]] = []
+    truncated_count = 0
     starts = range(0, len(rows), request_batch_size)
     progress = tqdm(
         starts,
@@ -205,12 +241,23 @@ def generate_target_responses_vllm(
     )
     for start in progress:
         batch = rows[start:start + request_batch_size]
-        prompts = [format_prompt(tokenizer, str(row["prompt_text"])) for row in batch]
+        prompts: list[str] = []
+        prompt_metadata: list[dict[str, Any] | None] = []
+        for row in batch:
+            prompt, meta = _prepare_vllm_prompt(
+                tokenizer,
+                str(row["prompt_text"]),
+                max_prompt_tokens=max_prompt_tokens,
+            )
+            prompts.append(prompt)
+            prompt_metadata.append(meta)
+            if meta is not None:
+                truncated_count += 1
         outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
-        for row, request_output in zip(batch, outputs):
+        for row, request_output, meta in zip(batch, outputs, prompt_metadata):
             text = request_output.outputs[0].text if request_output.outputs else ""
-            out.append(_target_generated_row(row, text))
-        progress.set_postfix(prompts=len(out))
+            out.append(_target_generated_row(row, text, extra_metadata=meta))
+        progress.set_postfix(prompts=len(out), truncated=truncated_count)
     return out
 
 

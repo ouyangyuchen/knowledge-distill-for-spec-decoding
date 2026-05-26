@@ -18,6 +18,7 @@ MODE="${MODE:-greedy}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 TOP_P="${TOP_P:-1.0}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-2048}"
+MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 SWAP_SPACE="${SWAP_SPACE:-0}"
@@ -45,7 +46,13 @@ echo ">>> request batch size: ${REQUEST_BATCH_SIZE}"
 echo ">>> max new tokens: ${MAX_NEW_TOKENS}"
 echo ">>> mode/temp/top_p: ${MODE}/${TEMPERATURE}/${TOP_P}"
 echo ">>> max_model_len: ${MAX_MODEL_LEN}"
+echo ">>> max prompt tokens: ${MAX_PROMPT_TOKENS:-<auto: max_model_len - max_new_tokens>}"
 echo ">>> gpu memory utilization: ${GPU_MEMORY_UTILIZATION}"
+
+MAX_PROMPT_TOKENS_OVERRIDE=()
+if [[ -n "${MAX_PROMPT_TOKENS}" ]]; then
+  MAX_PROMPT_TOKENS_OVERRIDE=("data.target_generation.max_prompt_tokens=${MAX_PROMPT_TOKENS}")
+fi
 
 if [[ "${PREPARE_DATA}" == "true" || "${PREPARE_DATA}" == "1" ]]; then
   echo ">>> Preparing processed data for ${DATA}"
@@ -66,6 +73,7 @@ python scripts/generate_target_responses.py \
   "data.target_generation.temperature=${TEMPERATURE}" \
   "data.target_generation.top_p=${TOP_P}" \
   "data.target_generation.max_model_len=${MAX_MODEL_LEN}" \
+  "${MAX_PROMPT_TOKENS_OVERRIDE[@]}" \
   "data.target_generation.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}" \
   "data.target_generation.tensor_parallel_size=${TENSOR_PARALLEL_SIZE}" \
   "data.target_generation.swap_space=${SWAP_SPACE}" \

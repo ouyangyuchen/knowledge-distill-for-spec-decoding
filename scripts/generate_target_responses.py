@@ -47,6 +47,7 @@ def _run(cfg: DictConfig) -> None:
     data_cfg = OmegaConf.to_container(cfg.data, resolve=True)
     gen_cfg = dict(data_cfg["target_generation"])
     backend = str(gen_cfg.get("backend", "vllm"))
+    max_prompt_tokens = gen_cfg.get("max_prompt_tokens")
     model_id = str(cfg.model.target)
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -136,6 +137,9 @@ def _run(cfg: DictConfig) -> None:
                 gpu_memory_utilization=float(gen_cfg.get("gpu_memory_utilization", 0.9)),
                 swap_space=float(gen_cfg.get("swap_space", 0)),
                 enforce_eager=bool(gen_cfg.get("enforce_eager", False)),
+                max_prompt_tokens=(
+                    None if max_prompt_tokens is None else int(max_prompt_tokens)
+                ),
                 llm=vllm_llm,
                 sampling_params=vllm_sampling_params,
                 progress_desc=f"{split} target responses",

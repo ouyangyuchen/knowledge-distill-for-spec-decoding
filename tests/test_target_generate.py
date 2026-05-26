@@ -19,6 +19,14 @@ class TinyTokenizer:
         assert add_generation_prompt is True
         return f"<user>{messages[0]['content']}<assistant>"
 
+    def __call__(self, text, add_special_tokens=False):
+        assert add_special_tokens is False
+        return {"input_ids": [ord(ch) for ch in text]}
+
+    def decode(self, input_ids, skip_special_tokens=False):
+        assert skip_special_tokens is False
+        return "".join(chr(idx) for idx in input_ids)
+
 
 class FakeSamplingParams:
     last_kwargs = None
@@ -89,6 +97,7 @@ def test_vllm_generation_preserves_order_and_metadata(fake_vllm):
         gpu_memory_utilization=0.9,
         swap_space=0,
         enforce_eager=False,
+        show_progress=False,
     )
 
     assert [row["id"] for row in out] == ["a", "b"]
@@ -122,6 +131,7 @@ def test_vllm_greedy_sampling_params_and_engine_defaults(fake_vllm):
         gpu_memory_utilization=0.9,
         swap_space=0,
         enforce_eager=False,
+        show_progress=False,
     )
 
     assert FakeSamplingParams.last_kwargs == {
@@ -153,4 +163,32 @@ def test_vllm_missing_dependency_error(monkeypatch):
             tokenizer=TinyTokenizer(),
             request_batch_size=1,
             max_new_tokens=16,
+            show_progress=False,
         )
+
+
+def test_vllm_truncates_overlong_prompts_and_marks_metadata(fake_vllm):
+    rows = [
+        {
+            "id": "long",
+            "prompt_text": "abcdefghijklmnopqrstuvwxyz",
+            "response_text": "old",
+            "source": "test",
+        }
+    ]
+
+    out = generate_target_responses_vllm(
+        rows,
+        model_id="Qwen/test",
+        tokenizer=TinyTokenizer(),
+        request_batch_size=1,
+        max_new_tokens=4,
+        max_model_len=12,
+        max_prompt_tokens=11,
+        show_progress=False,
+    )
+
+    assert FakeLLM.generate_calls[0]["prompts"] == ["<assistant>"]
+    assert out[0]["metadata"]["target_prompt_truncated"] is True
+    assert out[0]["metadata"]["target_prompt_tokens_original"] > 11
+    assert out[0]["metadata"]["target_prompt_tokens_used"] == 11

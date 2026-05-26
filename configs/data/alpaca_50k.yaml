@@ -29,6 +29,7 @@ target_generation:
   temperature: 0.0
   top_p: 1.0
   max_model_len: 2048
+  max_prompt_tokens: null  # null => max_model_len - max_new_tokens
   gpu_memory_utilization: 0.9
   tensor_parallel_size: 1
   swap_space: 0
