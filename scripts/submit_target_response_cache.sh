@@ -32,60 +32,33 @@ REPO_BRANCH="${REPO_BRANCH:-codex/vllm-generate}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-cache_${MODEL}_${DATA}_seed${SEED}}"
 WANDB_MODE="${WANDB_MODE:-disabled}"
 
-TARGET_OVERRIDE=""
-if [[ -n "${TARGET_ID}" ]]; then
-  TARGET_OVERRIDE="model.target=${TARGET_ID}"
-fi
+quote() {
+  printf "%q" "$1"
+}
 
-LIMIT_OVERRIDE=""
-if [[ -n "${LIMIT}" ]]; then
-  LIMIT_OVERRIDE="+data.limit=${LIMIT}"
-fi
-
-read -r -d '' run_command <<EOF || true
-set -euo pipefail
-
-echo ">>> Target response cache job: ${EXPERIMENT_NAME}"
-echo ">>> model config: ${MODEL}"
-echo ">>> target override: ${TARGET_ID:-<config default>}"
-echo ">>> data: ${DATA}"
-echo ">>> splits: ${SPLITS}"
-echo ">>> prepare data first: ${PREPARE_DATA}"
-echo ">>> backend: ${BACKEND}"
-echo ">>> request batch size: ${REQUEST_BATCH_SIZE}"
-echo ">>> max new tokens: ${MAX_NEW_TOKENS}"
-echo ">>> mode/temp/top_p: ${MODE}/${TEMPERATURE}/${TOP_P}"
-echo ">>> max_model_len: ${MAX_MODEL_LEN}"
-echo ">>> gpu memory utilization: ${GPU_MEMORY_UTILIZATION}"
-
-if [[ "${PREPARE_DATA}" == "true" || "${PREPARE_DATA}" == "1" ]]; then
-  echo ">>> Preparing processed data for ${DATA}"
-  python scripts/prepare_data.py \
-model=${MODEL} data=${DATA} ${TARGET_OVERRIDE} ${LIMIT_OVERRIDE} seed=${SEED}
-else
-  echo ">>> PREPARE_DATA=${PREPARE_DATA}; skipping prepare_data.py"
-fi
-
-echo ">>> Generating target responses"
-python scripts/generate_target_responses.py \
-model=${MODEL} data=${DATA} ${TARGET_OVERRIDE} ${LIMIT_OVERRIDE} seed=${SEED} \
-"data.target_generation.splits=${SPLITS}" \
-data.target_generation.backend=${BACKEND} \
-data.target_generation.request_batch_size=${REQUEST_BATCH_SIZE} \
-data.target_generation.max_new_tokens=${MAX_NEW_TOKENS} \
-data.target_generation.mode=${MODE} \
-data.target_generation.temperature=${TEMPERATURE} \
-data.target_generation.top_p=${TOP_P} \
-data.target_generation.max_model_len=${MAX_MODEL_LEN} \
-data.target_generation.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION} \
-data.target_generation.tensor_parallel_size=${TENSOR_PARALLEL_SIZE} \
-data.target_generation.swap_space=${SWAP_SPACE} \
-data.target_generation.enforce_eager=${ENFORCE_EAGER}
-
-echo ">>> Target response cache finished"
-EOF
+run_command="MODEL=$(quote "${MODEL}")"
+run_command+=" DATA=$(quote "${DATA}")"
+run_command+=" TARGET_ID=$(quote "${TARGET_ID}")"
+run_command+=" SEED=$(quote "${SEED}")"
+run_command+=" SPLITS=$(quote "${SPLITS}")"
+run_command+=" PREPARE_DATA=$(quote "${PREPARE_DATA}")"
+run_command+=" LIMIT=$(quote "${LIMIT}")"
+run_command+=" BACKEND=$(quote "${BACKEND}")"
+run_command+=" REQUEST_BATCH_SIZE=$(quote "${REQUEST_BATCH_SIZE}")"
+run_command+=" MAX_NEW_TOKENS=$(quote "${MAX_NEW_TOKENS}")"
+run_command+=" MODE=$(quote "${MODE}")"
+run_command+=" TEMPERATURE=$(quote "${TEMPERATURE}")"
+run_command+=" TOP_P=$(quote "${TOP_P}")"
+run_command+=" MAX_MODEL_LEN=$(quote "${MAX_MODEL_LEN}")"
+run_command+=" GPU_MEMORY_UTILIZATION=$(quote "${GPU_MEMORY_UTILIZATION}")"
+run_command+=" TENSOR_PARALLEL_SIZE=$(quote "${TENSOR_PARALLEL_SIZE}")"
+run_command+=" SWAP_SPACE=$(quote "${SWAP_SPACE}")"
+run_command+=" ENFORCE_EAGER=$(quote "${ENFORCE_EAGER}")"
+run_command+=" EXPERIMENT_NAME=$(quote "${EXPERIMENT_NAME}")"
+run_command+=" bash scripts/run_target_response_cache.sh"
 
 echo ">>> Submitting target response cache job: ${EXPERIMENT_NAME}"
+echo ">>> RUN_COMMAND chars: ${#run_command} (kept short for RunAI env limit)"
 REPO_BRANCH="${REPO_BRANCH}" \
 RUN_NAME="${EXPERIMENT_NAME}" \
 WANDB_MODE="${WANDB_MODE}" \
