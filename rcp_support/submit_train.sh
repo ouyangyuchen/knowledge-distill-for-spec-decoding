@@ -205,9 +205,11 @@ restore_clean_worktree() {
 }
 
 echo ">>> Fetching origin/${REPO_BRANCH}"
-git fetch --prune origin "+refs/heads/${REPO_BRANCH}:refs/remotes/origin/${REPO_BRANCH}"
+git fetch --prune --force origin "+refs/heads/${REPO_BRANCH}:refs/remotes/origin/${REPO_BRANCH}"
 restore_clean_worktree HEAD
-git checkout -B "${REPO_BRANCH}" "origin/${REPO_BRANCH}"
+git checkout --detach "origin/${REPO_BRANCH}"
+git branch -f "${REPO_BRANCH}" "origin/${REPO_BRANCH}"
+git checkout "${REPO_BRANCH}"
 restore_clean_worktree "origin/${REPO_BRANCH}"
 
 link_artifact_dir() {
