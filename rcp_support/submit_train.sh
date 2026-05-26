@@ -192,12 +192,23 @@ for artifact in checkpoints data outputs wandb; do
   fi
 done
 
+restore_clean_worktree() {
+  local ref="${1:-HEAD}"
+
+  echo ">>> Restoring managed checkout to a clean state (${ref})"
+  if git rev-parse --verify "${ref}^{commit}" >/dev/null 2>&1; then
+    git reset --hard "${ref}"
+  elif git rev-parse --verify HEAD >/dev/null 2>&1; then
+    git reset --hard HEAD
+  fi
+  git clean -ffdx
+}
+
 echo ">>> Fetching origin/${REPO_BRANCH}"
 git fetch --prune origin "+refs/heads/${REPO_BRANCH}:refs/remotes/origin/${REPO_BRANCH}"
-git clean -ffd
+restore_clean_worktree HEAD
 git checkout -B "${REPO_BRANCH}" "origin/${REPO_BRANCH}"
-git reset --hard "origin/${REPO_BRANCH}"
-git clean -ffd
+restore_clean_worktree "origin/${REPO_BRANCH}"
 
 link_artifact_dir() {
   local name="$1"
