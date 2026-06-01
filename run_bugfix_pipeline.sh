@@ -25,6 +25,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TRANSFORMERS_NO_TF=1          # silence eager TensorFlow import in this env
 DATA_ROOT=/net/inltitan2.epfl.ch/scratch2/tzhu/open-project-m2-shallowseek/data
 PROMPTS=data/processed/ultrachat_50k/eval.jsonl
+EVAL_BACKEND="${EVAL_BACKEND:-manual}"
 
 cd "$REPO" || { echo "cannot cd $REPO"; exit 1; }
 mkdir -p logs_bugfix
@@ -69,6 +70,7 @@ EVAL_COMMON=(
   prompts.limit=20
   runtime.gamma=4
   runtime.max_new_tokens=128
+  eval.backend="$EVAL_BACKEND"
   eval.n_warmup=1
   eval.n_repeats=2
 )

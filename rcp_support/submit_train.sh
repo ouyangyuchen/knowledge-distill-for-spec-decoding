@@ -10,7 +10,7 @@ set -euo pipefail
 
 # ============== EDIT THESE LINES ==============
 RUN_NAME="${RUN_NAME:-debug_fkl_overfit}"  # Used in W&B and the default Hydra run_name override.
-GASPAR="${GASPAR:-gaspar}"               # YOUR GASPAR EPFL username.
+GASPAR="${GASPAR:-youyang}"               # YOUR GASPAR EPFL username.
 GROUP="${GROUP:-g67}"                     # YOUR TEAM, e.g. g07.
 WANDB_MODE="${WANDB_MODE:-online}"       # online, offline, or disabled.
 

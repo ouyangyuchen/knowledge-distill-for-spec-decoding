@@ -50,6 +50,7 @@ RUNTIME_TEMPERATURE="${RUNTIME_TEMPERATURE:-1.0}"
 RUNTIME_TOP_P="${RUNTIME_TOP_P:-0.9}"
 N_WARMUP="${N_WARMUP:-1}"
 N_REPEATS="${N_REPEATS:-3}"
+EVAL_BACKEND="${EVAL_BACKEND:-manual}"
 
 WANDB="${WANDB:-false}"
 RUN_TAG="${RUN_TAG:-ultra50k_bugfix_s${TRAIN_STEPS}_seq${DATA_MAX_SEQ_LEN}_effbs$((TRAIN_BATCH_SIZE * GRAD_ACCUM_STEPS))}"
@@ -123,6 +124,7 @@ run_eval() {
     runtime.top_p="${RUNTIME_TOP_P}" \
     runtime.gamma="${gamma}" \
     runtime.max_new_tokens="${MAX_NEW_TOKENS}" \
+    eval.backend="${EVAL_BACKEND}" \
     eval.n_warmup="${N_WARMUP}" \
     eval.n_repeats="${N_REPEATS}" \
     hydra.run.dir="${HYDRA_ROOT}/${run_name}"
@@ -218,6 +220,7 @@ RUNTIME_TEMPERATURE=${RUNTIME_TEMPERATURE}
 RUNTIME_TOP_P=${RUNTIME_TOP_P}
 N_WARMUP=${N_WARMUP}
 N_REPEATS=${N_REPEATS}
+EVAL_BACKEND=${EVAL_BACKEND}
 WANDB=${WANDB}
 WANDB_MODE=${WANDB_MODE}
 WANDB_PROJECT=${WANDB_PROJECT}

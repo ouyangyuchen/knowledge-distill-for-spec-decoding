@@ -29,6 +29,7 @@ EVAL_GAMMA="${EVAL_GAMMA:-4}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-256}"
 EVAL_WARMUP="${EVAL_WARMUP:-1}"
 EVAL_REPEATS="${EVAL_REPEATS:-3}"
+EVAL_BACKEND="${EVAL_BACKEND:-manual}"
 EVAL_REPORT_TO_WANDB="${EVAL_REPORT_TO_WANDB:-true}"
 
 case "${DRAFT_SIZE}" in
@@ -84,6 +85,7 @@ echo ">>> eval prompts limit: ${EVAL_PROMPTS_LIMIT}"
 echo ">>> eval gamma: ${EVAL_GAMMA}"
 echo ">>> eval max_new_tokens: ${EVAL_MAX_NEW_TOKENS}"
 echo ">>> eval warmup/repeats: ${EVAL_WARMUP}/${EVAL_REPEATS}"
+echo ">>> eval backend: ${EVAL_BACKEND}"
 echo ">>> eval report to W&B: ${EVAL_REPORT_TO_WANDB}"
 
 export PYTORCH_CUDA_ALLOC_CONF
@@ -138,6 +140,7 @@ if [[ "${EVAL_PRETRAINED_BASELINE}" == "true" || "${EVAL_PRETRAINED_BASELINE}" =
     "prompts.limit=${EVAL_PROMPTS_LIMIT}" \
     "runtime.gamma=${EVAL_GAMMA}" \
     "runtime.max_new_tokens=${EVAL_MAX_NEW_TOKENS}" \
+    "eval.backend=${EVAL_BACKEND}" \
     "eval.n_warmup=${EVAL_WARMUP}" \
     "eval.n_repeats=${EVAL_REPEATS}" \
     "wandb.enabled=${EVAL_REPORT_TO_WANDB}" \
@@ -157,6 +160,7 @@ for loss in ${LOSSES}; do
     "prompts.limit=${EVAL_PROMPTS_LIMIT}" \
     "runtime.gamma=${EVAL_GAMMA}" \
     "runtime.max_new_tokens=${EVAL_MAX_NEW_TOKENS}" \
+    "eval.backend=${EVAL_BACKEND}" \
     "eval.n_warmup=${EVAL_WARMUP}" \
     "eval.n_repeats=${EVAL_REPEATS}" \
     "wandb.enabled=${EVAL_REPORT_TO_WANDB}" \

@@ -16,6 +16,7 @@ def test_advertised_loss_data_combinations_compose(monkeypatch):
                 assert cfg.loss.kind == loss
                 assert cfg.data.id == data_name
                 assert cfg.output_dir.startswith("checkpoints/")
+                assert cfg.eval.backend == "manual"
 
 
 def test_qwen3_a100_config_composes():
