@@ -14,4 +14,6 @@ vllm:
   gpu_memory_utilization: 0.9
   swap_space: 0
   enforce_eager: false
+  # vLLM offline LLM defaults to disabled stats; spec-decode acceptance needs them.
+  disable_log_stats: false
   max_num_seqs: null

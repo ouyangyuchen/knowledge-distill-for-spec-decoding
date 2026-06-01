@@ -24,6 +24,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
+source "${ROOT}/scripts/env.sh"
+echo ">>> Python: ${KDSD_PYTHON}"
 
 DATA="${DATA:-ultrachat_50k}"
 EVAL_DATA="${EVAL_DATA:-${DATA}}"
@@ -112,7 +114,7 @@ run_eval() {
   fi
 
   log "Evaluating ${run_name} (draft=${draft}, gamma=${gamma})"
-  uv run python scripts/evaluate_sd.py \
+  "${KDSD_PYTHON}" scripts/evaluate_sd.py \
     run_name="${run_name}" \
     results_dir="${RESULTS_ROOT}/${run_name}" \
     draft="${draft}" \
@@ -166,7 +168,7 @@ train_loss() {
   fi
 
   log "Training ${run_name} (loss=${loss}, alpha=${alpha}, batch=${batch_size}, grad_accum=${grad_accum}); log=${train_log}"
-  WANDB_NAME="${run_name}" uv run python scripts/train_size.py \
+  WANDB_NAME="${run_name}" "${KDSD_PYTHON}" scripts/train_size.py \
     run_name="${run_name}" \
     output_dir="${CHECKPOINT_ROOT}/${run_name}" \
     loss="${loss}" \
@@ -241,7 +243,7 @@ elif [[ "${WANDB}" == "true" && "${WANDB_MODE}" == "offline" ]]; then
 fi
 
 log "Preparing fixed eval data split"
-uv run python scripts/prepare_data.py data="${EVAL_DATA}"
+"${KDSD_PYTHON}" scripts/prepare_data.py data="${EVAL_DATA}"
 
 if [[ ! -f "${EVAL_JSONL}" ]]; then
   echo "ERROR: expected eval JSONL not found: ${EVAL_JSONL}" >&2

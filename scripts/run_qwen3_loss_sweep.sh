@@ -4,6 +4,12 @@
 
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT}"
+source "${ROOT}/scripts/env.sh"
+echo ">>> Python: ${KDSD_PYTHON}"
+
+
 DRAFT_SIZE="${DRAFT_SIZE:-0.6b}"  # 0.6b or 1.7b
 DATA="${DATA:-ultrachat_50k}"
 STEPS="${STEPS:-0}"
@@ -103,7 +109,7 @@ for loss in ${LOSSES}; do
   WANDB_GROUP="${WANDB_GROUP}" \
   WANDB_NAME="${run_name}" \
   WANDB_JOB_TYPE="train" \
-  python scripts/train.py \
+  "${KDSD_PYTHON}" scripts/train.py \
     model=qwen3 train=a100_40gb_qwen3 "data=${DATA}" "${target_override[@]}" "${loss_overrides[@]}" \
     "train.draft_init=${DRAFT_ID}" \
     "train.max_steps=${STEPS}" \
@@ -133,7 +139,7 @@ eval_result_runs=()
 if [[ "${EVAL_PRETRAINED_BASELINE}" == "true" || "${EVAL_PRETRAINED_BASELINE}" == "1" ]]; then
   baseline_eval_run="${RUN_NAME_PREFIX}_pretrain_${DATA}_seed${SEED}_eval_g${EVAL_GAMMA}_max${EVAL_MAX_NEW_TOKENS}"
   echo ">>> Evaluating pretrained draft baseline: ${baseline_eval_run}"
-  python scripts/evaluate_sd.py \
+  "${KDSD_PYTHON}" scripts/evaluate_sd.py \
     model=qwen3 "data=${DATA}" "${target_override[@]}" \
     "draft=${DRAFT_ID}" \
     "prompts.jsonl=${EVAL_PROMPTS_JSONL}" \
@@ -153,7 +159,7 @@ for loss in ${LOSSES}; do
   eval_run="${train_run}_eval_g${EVAL_GAMMA}_max${EVAL_MAX_NEW_TOKENS}"
 
   echo ">>> Evaluating trained draft: ${eval_run}"
-  python scripts/evaluate_sd.py \
+  "${KDSD_PYTHON}" scripts/evaluate_sd.py \
     model=qwen3 "data=${DATA}" "${target_override[@]}" \
     "draft=checkpoints/${train_run}/model" \
     "prompts.jsonl=${EVAL_PROMPTS_JSONL}" \
@@ -169,7 +175,7 @@ for loss in ${LOSSES}; do
 done
 
 echo ">>> Final SD evaluation summary"
-python - "${eval_result_runs[@]}" <<'PY'
+"${KDSD_PYTHON}" - "${eval_result_runs[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path

@@ -79,6 +79,9 @@ def _create_vllm_engine(
         "gpu_memory_utilization": float(vllm_cfg.get("gpu_memory_utilization", 0.9)),
         "swap_space": float(vllm_cfg.get("swap_space", 0)),
         "enforce_eager": bool(vllm_cfg.get("enforce_eager", False)),
+        # vLLM's offline LLM disables stat logging by default in recent releases.
+        # Keep it enabled so draft-model speculative counters are readable.
+        "disable_log_stats": bool(vllm_cfg.get("disable_log_stats", False)),
         "seed": None if seed is None else int(seed),
     }
     if vllm_cfg.get("max_num_seqs") is not None:
@@ -187,14 +190,28 @@ def _metric_values(metric: Any) -> list[float]:
         return []
 
 
-def _read_spec_metrics(llm) -> dict[str, Any]:
-    metrics = llm.get_metrics() if hasattr(llm, "get_metrics") else []
-    out = {
+def _empty_spec_metrics() -> dict[str, Any]:
+    return {
         "num_drafts": 0.0,
         "num_draft_tokens": 0.0,
         "num_accepted_tokens": 0.0,
         "accepted_tokens_per_pos": [],
     }
+
+
+def _read_spec_metrics(llm) -> dict[str, Any]:
+    out = _empty_spec_metrics()
+    if not hasattr(llm, "get_metrics"):
+        return out
+    try:
+        metrics = llm.get_metrics()
+    except AssertionError as exc:
+        LOG.warning(
+            "vLLM metrics unavailable (%s); speculative acceptance metrics will be zero. "
+            "Set eval.vllm.disable_log_stats=false to collect them.",
+            exc,
+        )
+        return out
     for metric in metrics:
         name = getattr(metric, "name", "")
         if name == "vllm:spec_decode_num_drafts":
@@ -283,6 +300,7 @@ def run_vllm_eval(
         spec_metrics = _read_spec_metrics(spec_llm)
     finally:
         _release_vllm_engine(spec_llm)
+        spec_llm = None
 
     v_outputs: list[Any] = []
     v_total_s = float("nan")
@@ -309,6 +327,7 @@ def run_vllm_eval(
             )
         finally:
             _release_vllm_engine(vanilla_llm)
+            vanilla_llm = None
 
     if not has_draft:
         vanilla_time_s = sd_total_s

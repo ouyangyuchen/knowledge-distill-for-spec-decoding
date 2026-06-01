@@ -3,6 +3,12 @@
 
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT}"
+source "${ROOT}/scripts/env.sh"
+echo ">>> Python: ${KDSD_PYTHON}"
+
+
 MODEL="${MODEL:-qwen25}"
 DATA="${DATA:-ultrachat_50k}"
 TARGET_ID="${TARGET_ID:-}"
@@ -56,14 +62,14 @@ fi
 
 if [[ "${PREPARE_DATA}" == "true" || "${PREPARE_DATA}" == "1" ]]; then
   echo ">>> Preparing processed data for ${DATA}"
-  python scripts/prepare_data.py \
+  "${KDSD_PYTHON}" scripts/prepare_data.py \
     "model=${MODEL}" "data=${DATA}" "${TARGET_OVERRIDE[@]}" "${LIMIT_OVERRIDE[@]}" "seed=${SEED}"
 else
   echo ">>> PREPARE_DATA=${PREPARE_DATA}; skipping prepare_data.py"
 fi
 
 echo ">>> Generating target responses"
-python scripts/generate_target_responses.py \
+"${KDSD_PYTHON}" scripts/generate_target_responses.py \
   "model=${MODEL}" "data=${DATA}" "${TARGET_OVERRIDE[@]}" "${LIMIT_OVERRIDE[@]}" "seed=${SEED}" \
   "data.target_generation.splits=${SPLITS}" \
   "data.target_generation.backend=${BACKEND}" \

@@ -109,6 +109,7 @@ def _eval_cfg(run_vanilla_baseline=True):
             "gpu_memory_utilization": 0.9,
             "swap_space": 0,
             "enforce_eager": False,
+            "disable_log_stats": False,
             "max_num_seqs": None,
         },
     }
@@ -140,6 +141,7 @@ def test_vllm_eval_uses_draft_model_speculative_config(fake_vllm):
     assert spec_kwargs["tokenizer"] == "target-model"
     assert spec_kwargs["dtype"] == "bfloat16"
     assert spec_kwargs["trust_remote_code"] is True
+    assert spec_kwargs["disable_log_stats"] is False
     assert spec_kwargs["speculative_config"] == {
         "method": "draft_model",
         "model": "draft-model",
