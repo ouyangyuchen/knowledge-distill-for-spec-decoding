@@ -16,6 +16,11 @@ output_dir: checkpoints/${run_name}
 # evaluation runs vanilla (target-only) inference and reports speedup=1.0.
 draft: null
 
+# Pretrained draft IDs are materialized here as checkpoint-shaped artifacts before
+# eval so pretrained and trained drafts are loaded through the same local path
+# shape: <root>/<model-id-hash>/{model,config.yaml,meta.json}.
+pretrained_checkpoint_root: checkpoints/pretrained
+
 # Prompt source. Either a local jsonl path conforming to the data contract in
 # CLAUDE.md, or an HF dataset spec. Exactly one must be set.
 prompts:

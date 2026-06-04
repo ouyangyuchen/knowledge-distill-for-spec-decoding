@@ -23,8 +23,10 @@ imported, since huggingface_hub reads HF_HOME at import time.
 from __future__ import annotations
 
 import json
+import hashlib
 from numbers import Real
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -66,7 +68,8 @@ def _run_eval(cfg: DictConfig, out_dir: Path) -> None:
     from kdsd.utils.logging import get_logger
 
     LOG = get_logger("kdsd.evaluate_sd")
-    checkpoint_meta_path, checkpoint_meta = _checkpoint_metadata_from_draft(cfg.get("draft"))
+    eval_draft_spec = _prepare_draft_for_eval(cfg, LOG)
+    checkpoint_meta_path, checkpoint_meta = _checkpoint_metadata_from_draft(eval_draft_spec)
     LOG.info("resolved config:\n%s", OmegaConf.to_yaml(cfg))
     LOG.info("HF_HOME=%s", os.environ.get("HF_HOME"))
     if checkpoint_meta_path is not None:
@@ -96,12 +99,11 @@ def _run_eval(cfg: DictConfig, out_dir: Path) -> None:
 
         pair = load_pair(
             target_id=str(cfg.model.target),
-            draft_spec=(None if cfg.draft in (None, "", "null") else str(cfg.draft)),
+            draft_spec=eval_draft_spec,
             dtype=str(cfg.model.dtype),
             device=str(cfg.model.device),
             attn_impl=str(cfg.model.attn_impl),
             trust_remote_code=bool(cfg.model.trust_remote_code),
-            draft_default=str(cfg.model.get("draft_default") or "") or None,
         )
         LOG.info(
             "Loaded target=%s draft=%s on %s (dtype=%s)",
@@ -127,10 +129,7 @@ def _run_eval(cfg: DictConfig, out_dir: Path) -> None:
         from kdsd.eval.vllm_runner import run_vllm_eval
 
         target_id = str(cfg.model.target)
-        draft_id = _resolve_draft_id(
-            cfg.get("draft"),
-            draft_default=str(cfg.model.get("draft_default") or "") or None,
-        )
+        draft_id = eval_draft_spec
         tokenizer = AutoTokenizer.from_pretrained(
             target_id,
             trust_remote_code=bool(cfg.model.trust_remote_code),
@@ -215,7 +214,38 @@ def _checkpoint_metadata_from_draft(draft_spec) -> tuple[Path | None, dict]:
     return None, {}
 
 
-def _resolve_draft_id(draft_spec, *, draft_default: str | None = None) -> str | None:
+def _prepare_draft_for_eval(cfg: DictConfig, log) -> str | None:
+    """Return a local checkpoint-model path for pretrained drafts when possible."""
+    draft_source = _resolve_draft_source(
+        cfg.get("draft"),
+        draft_default=str(cfg.model.get("draft_default") or "") or None,
+    )
+    if draft_source is None:
+        return None
+
+    local_path = _resolve_existing_local_draft_path(draft_source)
+    if local_path is not None:
+        return str(local_path)
+
+    if _looks_like_missing_local_path(draft_source):
+        return draft_source
+
+    checkpoint_dir = _pretrained_checkpoint_dir(cfg, draft_source)
+    model_dir = checkpoint_dir / "model"
+    if _pretrained_checkpoint_exists(checkpoint_dir):
+        log.info("Using cached pretrained draft checkpoint at %s", model_dir)
+        return str(model_dir)
+
+    log.info(
+        "No cached checkpoint found for pretrained draft %s; saving one to %s",
+        draft_source,
+        checkpoint_dir,
+    )
+    _save_pretrained_draft_checkpoint(cfg, source_id=draft_source, checkpoint_dir=checkpoint_dir)
+    return str(model_dir)
+
+
+def _resolve_draft_source(draft_spec, *, draft_default: str | None = None) -> str | None:
     if draft_spec in (None, "", "null"):
         return None
 
@@ -226,7 +256,111 @@ def _resolve_draft_id(draft_spec, *, draft_default: str | None = None) -> str | 
     if draft_key == "pretrained":
         if not draft_default:
             raise ValueError("draft='pretrained' requires model.draft_default to be set")
-        draft_text = draft_default
+        return draft_default
+    return draft_text
+
+
+def _resolve_existing_local_draft_path(draft_text: str) -> Path | None:
+    draft_path = Path(draft_text).expanduser()
+    root_path = _ROOT / draft_path
+    if draft_path.is_absolute() and draft_path.exists():
+        return draft_path
+    if not draft_path.is_absolute() and (
+        draft_text.startswith(("./", "../")) or root_path.exists()
+    ):
+        return root_path
+    return None
+
+
+def _looks_like_missing_local_path(draft_text: str) -> bool:
+    return draft_text.startswith(("./", "../", "/"))
+
+
+def _pretrained_checkpoint_dir(cfg: DictConfig, source_id: str) -> Path:
+    root = Path(str(cfg.get("pretrained_checkpoint_root", "checkpoints/pretrained"))).expanduser()
+    if not root.is_absolute():
+        root = _ROOT / root
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", source_id).strip("-").lower()
+    if not slug:
+        slug = "model"
+    digest = hashlib.sha256(source_id.encode("utf-8")).hexdigest()[:10]
+    return root / f"{slug}-{digest}"
+
+
+def _checkpoint_model_exists(model_dir: Path) -> bool:
+    if not (model_dir / "config.json").exists():
+        return False
+    weight_files = (
+        "model.safetensors",
+        "model.safetensors.index.json",
+        "pytorch_model.bin",
+        "pytorch_model.bin.index.json",
+    )
+    return any((model_dir / name).exists() for name in weight_files)
+
+
+def _pretrained_checkpoint_exists(checkpoint_dir: Path) -> bool:
+    return (
+        _checkpoint_model_exists(checkpoint_dir / "model")
+        and (checkpoint_dir / "config.yaml").exists()
+        and (checkpoint_dir / "meta.json").exists()
+    )
+
+
+def _save_pretrained_draft_checkpoint(
+    cfg: DictConfig,
+    *,
+    source_id: str,
+    checkpoint_dir: Path,
+) -> None:
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from kdsd.models.loader import _resolve_dtype
+    from kdsd.utils.experiment import git_sha
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    model_dir = checkpoint_dir / "model"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    trust_remote_code = bool(cfg.model.trust_remote_code)
+    model = AutoModelForCausalLM.from_pretrained(
+        source_id,
+        dtype=_resolve_dtype(str(cfg.model.dtype)),
+        attn_implementation=str(cfg.model.attn_impl),
+        trust_remote_code=trust_remote_code,
+    )
+    try:
+        model.save_pretrained(model_dir, safe_serialization=True)
+    finally:
+        del model
+
+    tokenizer = AutoTokenizer.from_pretrained(source_id, trust_remote_code=trust_remote_code)
+    tokenizer.save_pretrained(model_dir)
+    OmegaConf.save(cfg, checkpoint_dir / "config.yaml")
+    with (checkpoint_dir / "meta.json").open("w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "git_sha": git_sha(),
+                "run_name": f"pretrained__{source_id}",
+                "train_loss_final": None,
+                "steps": 0,
+                "dataset_id": None,
+                "draft_init": source_id,
+                "target": str(cfg.model.target),
+                "pretrained_checkpoint": True,
+            },
+            fh,
+            indent=2,
+            sort_keys=True,
+        )
+        fh.write("\n")
+
+
+def _resolve_draft_id(draft_spec, *, draft_default: str | None = None) -> str | None:
+    draft_text = _resolve_draft_source(draft_spec, draft_default=draft_default)
+    if draft_text is None:
+        return None
 
     draft_path = Path(draft_text).expanduser()
     root_path = _ROOT / draft_path
