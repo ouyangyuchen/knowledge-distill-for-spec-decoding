@@ -36,7 +36,7 @@ CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-checkpoints}"
 HYDRA_ROOT="${HYDRA_ROOT:-outputs/qwen3-eval-sweep}"
 PRETRAINED_CHECKPOINT_ROOT="${PRETRAINED_CHECKPOINT_ROOT:-${CHECKPOINT_ROOT}/pretrained}"
 
-REPO_BRANCH="${REPO_BRANCH:-codex/qwen3}"
+REPO_BRANCH="${REPO_BRANCH:-codex/vllm-eval}"
 
 case "${DRAFT_SIZE}" in
   0.6b|0_6b)
