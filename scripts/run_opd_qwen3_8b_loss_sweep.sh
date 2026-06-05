@@ -36,9 +36,21 @@ EVAL_PRETRAINED_BASELINE="${EVAL_PRETRAINED_BASELINE:-true}"
 EVAL_PROMPTS_LIMIT="${EVAL_PROMPTS_LIMIT:-50}"
 EVAL_GAMMA="${EVAL_GAMMA:-4}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-256}"
-EVAL_WARMUP="${EVAL_WARMUP:-1}"
+EVAL_WARMUP="${EVAL_WARMUP:-2}"
 EVAL_REPEATS="${EVAL_REPEATS:-3}"
+EVAL_BACKEND="${EVAL_BACKEND:-vllm}"
+EVAL_MODE="${EVAL_MODE:-sampling}"
+EVAL_TEMPERATURE="${EVAL_TEMPERATURE:-1.0}"
+EVAL_TOP_P="${EVAL_TOP_P:-0.9}"
 EVAL_REPORT_TO_WANDB="${EVAL_REPORT_TO_WANDB:-true}"
+VLLM_REQUEST_BATCH_SIZE="${VLLM_REQUEST_BATCH_SIZE:-1}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-2048}"
+VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.9}"
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-}"
+VLLM_DISABLE_LOG_STATS="${VLLM_DISABLE_LOG_STATS:-false}"
+RESULTS_ROOT="${RESULTS_ROOT:-/scratch/cs552-results}"
+HYDRA_ROOT="${HYDRA_ROOT:-outputs/opd-qwen3-vllm-eval}"
+PRETRAINED_CHECKPOINT_ROOT="${PRETRAINED_CHECKPOINT_ROOT:-checkpoints/pretrained}"
 
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-opd_qwen3_8btarget_${DRAFT_TAG}_seed${SEED}}"
 WANDB_GROUP="${WANDB_GROUP:-${EXPERIMENT_NAME}}"
@@ -67,8 +79,17 @@ echo ">>> OPD replay examples per prompt: ${OPD_MAX_REPLAY_EXAMPLES}"
 echo ">>> KD chunk size: ${KD_CHUNK_SIZE}"
 echo ">>> compile_target: ${COMPILE_TARGET}"
 echo ">>> run eval after training: ${RUN_EVAL}"
+echo ">>> eval backend: ${EVAL_BACKEND}"
+echo ">>> eval mode/temp/top_p: ${EVAL_MODE}/${EVAL_TEMPERATURE}/${EVAL_TOP_P}"
+echo ">>> vLLM request batch/max_model_len: ${VLLM_REQUEST_BATCH_SIZE}/${VLLM_MAX_MODEL_LEN}"
 
 export PYTORCH_CUDA_ALLOC_CONF
+mkdir -p "${RESULTS_ROOT}" "${HYDRA_ROOT}" "${PRETRAINED_CHECKPOINT_ROOT}"
+
+vllm_max_num_seqs_override=()
+if [[ -n "${VLLM_MAX_NUM_SEQS}" ]]; then
+  vllm_max_num_seqs_override=("eval.vllm.max_num_seqs=${VLLM_MAX_NUM_SEQS}")
+fi
 
 trained_runs=()
 for data in ${DATA_VARIANTS}; do
@@ -133,13 +154,26 @@ for data in ${DATA_VARIANTS}; do
     python scripts/evaluate_sd.py \
       model=qwen3 "data=${data}" "${target_override[@]}" \
       "draft=${DRAFT_ID}" \
+      "pretrained_checkpoint_root=${PRETRAINED_CHECKPOINT_ROOT}" \
       "prompts.jsonl=${eval_prompts_jsonl}" \
+      "prompts.hf_dataset=null" \
       "prompts.limit=${EVAL_PROMPTS_LIMIT}" \
+      "runtime.mode=${EVAL_MODE}" \
+      "runtime.temperature=${EVAL_TEMPERATURE}" \
+      "runtime.top_p=${EVAL_TOP_P}" \
       "runtime.gamma=${EVAL_GAMMA}" \
       "runtime.max_new_tokens=${EVAL_MAX_NEW_TOKENS}" \
+      "eval.backend=${EVAL_BACKEND}" \
       "eval.n_warmup=${EVAL_WARMUP}" \
       "eval.n_repeats=${EVAL_REPEATS}" \
+      "eval.vllm.request_batch_size=${VLLM_REQUEST_BATCH_SIZE}" \
+      "eval.vllm.max_model_len=${VLLM_MAX_MODEL_LEN}" \
+      "eval.vllm.gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION}" \
+      "eval.vllm.disable_log_stats=${VLLM_DISABLE_LOG_STATS}" \
+      "${vllm_max_num_seqs_override[@]}" \
       "wandb.enabled=${EVAL_REPORT_TO_WANDB}" \
+      "results_dir=${RESULTS_ROOT}/${baseline_eval_run}" \
+      "hydra.run.dir=${HYDRA_ROOT}/${baseline_eval_run}" \
       "run_name=${baseline_eval_run}"
     eval_result_runs+=("${baseline_eval_run}")
   fi
@@ -158,28 +192,43 @@ for item in "${trained_runs[@]}"; do
   python scripts/evaluate_sd.py \
     model=qwen3 "data=${data}" "${target_override[@]}" \
     "draft=checkpoints/${train_run}/model" \
+    "pretrained_checkpoint_root=${PRETRAINED_CHECKPOINT_ROOT}" \
     "prompts.jsonl=${eval_prompts_jsonl}" \
+    "prompts.hf_dataset=null" \
     "prompts.limit=${EVAL_PROMPTS_LIMIT}" \
+    "runtime.mode=${EVAL_MODE}" \
+    "runtime.temperature=${EVAL_TEMPERATURE}" \
+    "runtime.top_p=${EVAL_TOP_P}" \
     "runtime.gamma=${EVAL_GAMMA}" \
     "runtime.max_new_tokens=${EVAL_MAX_NEW_TOKENS}" \
+    "eval.backend=${EVAL_BACKEND}" \
     "eval.n_warmup=${EVAL_WARMUP}" \
     "eval.n_repeats=${EVAL_REPEATS}" \
+    "eval.vllm.request_batch_size=${VLLM_REQUEST_BATCH_SIZE}" \
+    "eval.vllm.max_model_len=${VLLM_MAX_MODEL_LEN}" \
+    "eval.vllm.gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION}" \
+    "eval.vllm.disable_log_stats=${VLLM_DISABLE_LOG_STATS}" \
+    "${vllm_max_num_seqs_override[@]}" \
     "wandb.enabled=${EVAL_REPORT_TO_WANDB}" \
+    "results_dir=${RESULTS_ROOT}/${eval_run}" \
+    "hydra.run.dir=${HYDRA_ROOT}/${eval_run}" \
     "run_name=${eval_run}"
   eval_result_runs+=("${eval_run}")
 done
 
 echo ">>> Final OPD SD evaluation summary"
-python - "${eval_result_runs[@]}" <<'PY'
+python - "${RESULTS_ROOT}" "${eval_result_runs[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 rows = []
-for run in sys.argv[1:]:
-    path = Path("/scratch/cs552-results") / run / "eval_summary.json"
+results_root = Path(sys.argv[1])
+runs = sys.argv[2:]
+for run in runs:
+    path = results_root / run / "eval_summary.json"
     if not path.exists():
-        rows.append((run, "missing", "", "", "", "", ""))
+        rows.append((run, "missing", "", "", "", "", "", ""))
         continue
     with path.open() as f:
         summary = json.load(f)
@@ -192,10 +241,11 @@ for run in sys.argv[1:]:
             "%.2f" % summary.get("tokens_per_second", float("nan")),
             "%.2f" % summary.get("sd_time_s", float("nan")),
             "%.2f" % summary.get("vanilla_time_s", float("nan")),
+            list(summary.get("engines", {}).keys())[0] if summary.get("engines") else "",
         )
     )
 
-headers = ("run", "speedup", "accept", "avg_acc", "tok/s", "sd_s", "vanilla_s")
+headers = ("run", "speedup", "accept", "avg_acc", "tok/s", "sd_s", "vanilla_s", "engine")
 widths = [max(len(str(x)) for x in col) for col in zip(headers, *rows)]
 line = "  ".join(str(h).ljust(w) for h, w in zip(headers, widths))
 print(line)
