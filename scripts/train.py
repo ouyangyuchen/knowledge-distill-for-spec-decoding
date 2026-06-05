@@ -35,9 +35,9 @@ def _run(cfg: DictConfig) -> None:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, set_seed
 
-    from kdsd.data import KDCollator, KDDataset
+    from kdsd.data import KDCollator, KDDataset, PromptOnlyCollator, PromptOnlyDataset
     from kdsd.models.loader import _resolve_dtype
-    from kdsd.train import KDTrainer
+    from kdsd.train import KDTrainer, OPDTrainer
     from kdsd.utils.experiment import ensure_run_name, git_sha, resolve_path
     from kdsd.utils.io import write_json
     from kdsd.utils.logging import get_logger
@@ -92,8 +92,12 @@ def _run(cfg: DictConfig) -> None:
         if hasattr(draft, "config"):
             draft.config.use_cache = False
 
+    train_method = str(cfg.train.get("method", "offline_kd")).lower()
+    if train_method not in {"offline_kd", "opd"}:
+        raise ValueError("train.method must be one of: offline_kd, opd")
+
     target = None
-    if str(cfg.loss.kind).lower() != "ce":
+    if str(cfg.loss.kind).lower() != "ce" or train_method == "opd":
         log.info("Loading frozen target=%s", cfg.model.target)
         target = AutoModelForCausalLM.from_pretrained(
             str(cfg.model.target),
@@ -111,12 +115,22 @@ def _run(cfg: DictConfig) -> None:
     else:
         log.info("Skipping frozen target load for CE-only training")
 
-    train_ds = KDDataset(
-        train_path,
-        tokenizer,
-        max_seq_len=int(cfg.data.max_seq_len),
-        cache_dir=str(cfg.data.tokenized_cache_dir),
-    )
+    if train_method == "opd":
+        if target is None:
+            raise ValueError("OPD training requires a frozen target model")
+        train_ds = PromptOnlyDataset(
+            train_path,
+            tokenizer,
+            max_prompt_len=_opd_max_prompt_len(cfg),
+            cache_dir=str(cfg.data.tokenized_cache_dir),
+        )
+    else:
+        train_ds = KDDataset(
+            train_path,
+            tokenizer,
+            max_seq_len=int(cfg.data.max_seq_len),
+            cache_dir=str(cfg.data.tokenized_cache_dir),
+        )
     overfit_samples = int(cfg.train.get("overfit_samples", 0) or 0)
     if overfit_samples > 0:
         from torch.utils.data import Subset
@@ -126,27 +140,53 @@ def _run(cfg: DictConfig) -> None:
         log.warning("Debug overfit mode: restricted train dataset to %d examples", n_overfit)
     eval_ds = None
     if val_path.exists():
-        eval_ds = KDDataset(
-            val_path,
-            tokenizer,
-            max_seq_len=int(cfg.data.max_seq_len),
-            cache_dir=str(cfg.data.tokenized_cache_dir),
-        )
+        if train_method == "opd":
+            eval_ds = PromptOnlyDataset(
+                val_path,
+                tokenizer,
+                max_prompt_len=_opd_max_prompt_len(cfg),
+                cache_dir=str(cfg.data.tokenized_cache_dir),
+            )
+        else:
+            eval_ds = KDDataset(
+                val_path,
+                tokenizer,
+                max_seq_len=int(cfg.data.max_seq_len),
+                cache_dir=str(cfg.data.tokenized_cache_dir),
+            )
         if len(eval_ds) == 0:
             eval_ds = None
     log.info("Loaded train=%d eval=%s", len(train_ds), len(eval_ds) if eval_ds is not None else "none")
 
     args = _training_args(cfg, out_dir, TrainingArguments, do_eval=eval_ds is not None)
-    trainer = KDTrainer(
-        model=draft,
-        target_model=target,
-        args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        data_collator=KDCollator(tokenizer),
-        tokenizer=tokenizer,
-        kd_cfg=OmegaConf.to_container(cfg.loss, resolve=True),
-    )
+    if train_method == "opd":
+        opd_cfg = OmegaConf.to_container(cfg.train.opd, resolve=True)
+        assert isinstance(opd_cfg, dict)
+        if opd_cfg.get("eos_token_id") is None:
+            opd_cfg["eos_token_id"] = tokenizer.eos_token_id
+        trainer = OPDTrainer(
+            model=draft,
+            target_model=target,
+            args=args,
+            train_dataset=train_ds,
+            eval_dataset=eval_ds,
+            data_collator=PromptOnlyCollator(tokenizer),
+            tokenizer=tokenizer,
+            kd_cfg=OmegaConf.to_container(cfg.loss, resolve=True),
+            opd_cfg=opd_cfg,
+            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id or 0,
+        )
+    else:
+        trainer = KDTrainer(
+            model=draft,
+            target_model=target,
+            args=args,
+            train_dataset=train_ds,
+            eval_dataset=eval_ds,
+            data_collator=KDCollator(tokenizer),
+            tokenizer=tokenizer,
+            kd_cfg=OmegaConf.to_container(cfg.loss, resolve=True),
+        )
     result = trainer.train(resume_from_checkpoint=cfg.train.resume_from_checkpoint)
     trainer.save_model(out_dir / "model")
     tokenizer.save_pretrained(out_dir / "model")
@@ -162,9 +202,15 @@ def _run(cfg: DictConfig) -> None:
             "train_loss_final": metrics.get("train_loss"),
             "steps": metrics.get("global_step", cfg.train.max_steps),
             "dataset_id": str(cfg.data.id),
+            "training_method": train_method,
             "draft_init": draft_init,
             "target": str(cfg.model.target),
             "loss": OmegaConf.to_container(cfg.loss, resolve=True),
+            "opd": (
+                OmegaConf.to_container(cfg.train.opd, resolve=True)
+                if train_method == "opd" and cfg.train.get("opd") is not None
+                else None
+            ),
             "data": {
                 "train_path": str(train_path),
                 "val_path": str(val_path),
@@ -206,6 +252,14 @@ def _ensure_training_data(cfg: DictConfig, *, train_path: Path, log) -> None:
             f"Expected training data at {train_path} after auto-preparation, but it was not written"
         )
     log.info("Prepared training data at %s", train_path)
+
+
+def _opd_max_prompt_len(cfg: DictConfig) -> int:
+    opd = cfg.train.opd
+    explicit = opd.get("max_prompt_tokens")
+    if explicit is not None and int(explicit) > 0:
+        return int(explicit)
+    return max(1, int(cfg.data.max_seq_len) - int(opd.rollout_max_new_tokens))
 
 
 def _ensure_source_processed_data(cfg: DictConfig, *, log) -> None:

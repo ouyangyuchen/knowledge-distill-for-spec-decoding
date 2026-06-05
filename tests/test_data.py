@@ -2,7 +2,15 @@ from pathlib import Path
 
 import torch
 
-from kdsd.data.dataset import KDCollator, KDDataset, format_prompt, tokenize_record
+from kdsd.data.dataset import (
+    KDCollator,
+    KDDataset,
+    PromptOnlyCollator,
+    PromptOnlyDataset,
+    format_prompt,
+    tokenize_prompt_record,
+    tokenize_record,
+)
 from kdsd.utils.io import write_jsonl
 
 
@@ -67,3 +75,44 @@ def test_collator_pads_labels_and_masks(tmp_path: Path):
     assert batch["input_ids"].shape[0] == 2
     assert batch["labels"][0, -1].item() in {-100, batch["input_ids"][0, -1].item()}
     assert batch["response_mask"].dtype is torch.bool
+
+
+def test_prompt_only_dataset_ignores_response_text(tmp_path: Path):
+    tok = TinyTokenizer()
+    src = tmp_path / "train.jsonl"
+    write_jsonl(
+        src,
+        [
+            {
+                "id": "1",
+                "prompt_text": "same prompt",
+                "response_text": "first response",
+                "source": "test",
+            },
+            {
+                "id": "2",
+                "prompt_text": "same prompt",
+                "response_text": "second response",
+                "source": "test",
+            },
+        ],
+    )
+
+    ds = PromptOnlyDataset(src, tok, max_prompt_len=128, cache_dir=tmp_path / "cache")
+
+    assert len(ds) == 2
+    assert ds[0]["input_ids"].equal(ds[1]["input_ids"])
+    assert "labels" not in ds[0]
+    assert ds.cache_path is not None and ds.cache_path.exists()
+
+
+def test_prompt_only_collator_pads_prompts():
+    tok = TinyTokenizer()
+    short = tokenize_prompt_record({"prompt_text": "a", "response_text": "ignored"}, tok, max_prompt_len=128)
+    long = tokenize_prompt_record({"prompt_text": "aaaa", "response_text": "ignored"}, tok, max_prompt_len=128)
+
+    batch = PromptOnlyCollator(tok)([short, long])
+
+    assert batch["input_ids"].shape[0] == 2
+    assert batch["attention_mask"].dtype is torch.long
+    assert batch["attention_mask"][0, -1].item() == 0

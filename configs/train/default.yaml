@@ -1,3 +1,4 @@
+method: offline_kd
 draft_init: ${model.draft_default}
 
 # HF Trainer arguments. Keep these conservative for a single 40GB A100; override

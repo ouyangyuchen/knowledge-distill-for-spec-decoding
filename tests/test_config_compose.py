@@ -31,6 +31,18 @@ def test_qwen3_a100_config_composes():
     assert cfg.train.per_device_train_batch_size == 1
 
 
+def test_opd_train_config_composes():
+    config_dir = Path(__file__).resolve().parents[1] / "configs"
+
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        cfg = compose(config_name="config", overrides=["train=opd", "loss=jsd"])
+
+    assert cfg.train.method == "opd"
+    assert cfg.train.opd.gamma == 4
+    assert cfg.train.opd.max_seq_len == cfg.data.max_seq_len
+    assert cfg.loss.kind == "jsd"
+
+
 def test_loss_chunk_size_override_composes_for_all_losses():
     config_dir = Path(__file__).resolve().parents[1] / "configs"
 

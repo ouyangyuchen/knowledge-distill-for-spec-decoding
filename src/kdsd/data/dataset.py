@@ -68,6 +68,52 @@ class KDDataset(Dataset):
         return self.examples[idx]
 
 
+class PromptOnlyDataset(Dataset):
+    """Tokenized prompt-only dataset for on-policy rollout training."""
+
+    def __init__(
+        self,
+        path: str | Path,
+        tokenizer: PreTrainedTokenizerBase,
+        *,
+        max_prompt_len: int,
+        cache_dir: str | Path | None = None,
+        use_cache: bool = True,
+    ) -> None:
+        self.path = Path(path)
+        self.tokenizer = tokenizer
+        self.max_prompt_len = int(max_prompt_len)
+        self.cache_path: Path | None = None
+
+        if use_cache and cache_dir is not None:
+            fp = prompt_cache_fingerprint(
+                self.path,
+                tokenizer,
+                max_prompt_len=self.max_prompt_len,
+            )
+            self.cache_path = Path(cache_dir) / fp / f"{self.path.stem}.pt"
+            if self.cache_path.exists():
+                self.examples = torch.load(self.cache_path, weights_only=False)
+                return
+
+        rows = read_jsonl(self.path)
+        self.examples = [
+            tokenize_prompt_record(row, tokenizer, max_prompt_len=self.max_prompt_len)
+            for row in rows
+        ]
+        self.examples = [ex for ex in self.examples if ex["input_ids"].numel() > 0]
+
+        if self.cache_path is not None:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(self.examples, self.cache_path)
+
+    def __len__(self) -> int:
+        return len(self.examples)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        return self.examples[idx]
+
+
 class KDCollator:
     def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
         pad_id = tokenizer.pad_token_id
@@ -97,6 +143,29 @@ class KDCollator:
             "attention_mask": torch.stack(batch["attention_mask"]).long(),
             "labels": torch.stack(batch["labels"]).long(),
             "response_mask": torch.stack(batch["response_mask"]).bool(),
+        }
+
+
+class PromptOnlyCollator:
+    def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
+        pad_id = tokenizer.pad_token_id
+        if pad_id is None:
+            pad_id = tokenizer.eos_token_id
+        if pad_id is None:
+            pad_id = 0
+        self.pad_id = int(pad_id)
+
+    def __call__(self, features: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+        max_len = max(int(f["input_ids"].shape[0]) for f in features)
+        input_ids = []
+        attention_mask = []
+        for f in features:
+            pad = max_len - int(f["input_ids"].shape[0])
+            input_ids.append(_pad_1d(f["input_ids"], pad, self.pad_id))
+            attention_mask.append(_pad_1d(f["attention_mask"], pad, 0))
+        return {
+            "input_ids": torch.stack(input_ids).long(),
+            "attention_mask": torch.stack(attention_mask).long(),
         }
 
 
@@ -131,6 +200,20 @@ def tokenize_record(
     }
 
 
+def tokenize_prompt_record(
+    row: dict[str, Any],
+    tokenizer: PreTrainedTokenizerBase,
+    *,
+    max_prompt_len: int,
+) -> dict[str, torch.Tensor]:
+    prompt = str(row["prompt_text"])
+    prompt_ids = _encode(tokenizer, format_prompt(tokenizer, prompt))[: int(max_prompt_len)]
+    return {
+        "input_ids": torch.tensor(prompt_ids, dtype=torch.long),
+        "attention_mask": torch.ones(len(prompt_ids), dtype=torch.long),
+    }
+
+
 def format_prompt(tokenizer: PreTrainedTokenizerBase, prompt: str) -> str:
     if getattr(tokenizer, "chat_template", None):
         return tokenizer.apply_chat_template(
@@ -155,6 +238,22 @@ def tokenized_cache_fingerprint(
     h.update(str(getattr(tokenizer, "chat_template", "") or "").encode("utf-8"))
     h.update(str(max_seq_len).encode("ascii"))
     h.update(json.dumps({"add_eos": add_eos, "mask": "response_only_v1"}).encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def prompt_cache_fingerprint(
+    path: str | Path,
+    tokenizer: PreTrainedTokenizerBase,
+    *,
+    max_prompt_len: int,
+) -> str:
+    path = Path(path)
+    h = hashlib.sha256()
+    h.update(_file_sha256(path).encode("utf-8"))
+    h.update(str(getattr(tokenizer, "name_or_path", tokenizer.__class__.__name__)).encode("utf-8"))
+    h.update(str(getattr(tokenizer, "chat_template", "") or "").encode("utf-8"))
+    h.update(str(max_prompt_len).encode("ascii"))
+    h.update(json.dumps({"mask": "prompt_only_v1"}).encode("utf-8"))
     return h.hexdigest()[:16]
 
 
