@@ -16,7 +16,7 @@ set -euo pipefail
 
 TARGET_ID="${TARGET_ID:-Qwen/Qwen3-8B}"
 DRAFT_ID="${DRAFT_ID:-Qwen/Qwen3-0.6B}"
-DRAFT_TAG="${DRAFT_TAG:-0p4b}"
+DRAFT_TAG="${DRAFT_TAG:-0p6b}"
 DATA_VARIANTS="${DATA_VARIANTS:-ultrachat_50k ultrachat_50k_target_gen}"
 LOSSES="${LOSSES:-fkl rkl jsd ce}"
 STEPS="${STEPS:-0}"
