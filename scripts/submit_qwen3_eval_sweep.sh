@@ -1,68 +1,51 @@
 #!/bin/bash
-# Submit one Run:AI job that evaluates Qwen3 pretrained + trained checkpoints.
-# Run this from the repo root on the laptop/cluster login machine where runai is
-# configured. It mirrors submit_qwen3_loss_sweep.sh but does not train.
+# Submit one Run:AI job that evaluates every complete final Qwen3 checkpoint
+# under /scratch/cs552-checkpoints. Run this from the repo root on the
+# laptop/cluster login machine where runai is configured.
 #
 # Common overrides:
-#   LOSSES="fkl rkl jsd ce" ./scripts/submit_qwen3_eval_sweep.sh
-#   DRAFT_SIZE=1.7b LOSSES="ce" ./scripts/submit_qwen3_eval_sweep.sh
 #   FORCE_RERUN=true EVAL_PROMPTS_LIMIT=200 ./scripts/submit_qwen3_eval_sweep.sh
+#   CHECKPOINT_ROOT=/scratch/other-checkpoints ./scripts/submit_qwen3_eval_sweep.sh
+#   SUMMARY_CSV=/scratch/cs552-results/my_qwen3_eval.csv ./scripts/submit_qwen3_eval_sweep.sh
 
 set -euo pipefail
 
-DRAFT_SIZE="${DRAFT_SIZE:-0.6b}"  # 0.6b or 1.7b
 DATA="${DATA:-ultrachat_50k}"
 SEED="${SEED:-42}"
 TARGET_ID="${TARGET_ID:-}"
 PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-EVAL_PRETRAINED_BASELINE="${EVAL_PRETRAINED_BASELINE:-true}"
-EVAL_PROMPTS_JSONL="${EVAL_PROMPTS_JSONL:-/scratch/cs552-data/processed/${DATA}/eval.jsonl}"
+EVAL_PRETRAINED_BASELINE="${EVAL_PRETRAINED_BASELINE:-false}"
+EVAL_PROMPTS_JSONL="${EVAL_PROMPTS_JSONL:-}"
 EVAL_PROMPTS_LIMIT="${EVAL_PROMPTS_LIMIT:-256}"
 EVAL_GAMMA="${EVAL_GAMMA:-4}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-256}"
 EVAL_WARMUP="${EVAL_WARMUP:-1}"
 EVAL_REPEATS="${EVAL_REPEATS:-1}"
-EVAL_BACKEND="${EVAL_BACKEND:-manual}"
-EVAL_MODE="${EVAL_MODE:-sampling}"
-EVAL_TEMPERATURE="${EVAL_TEMPERATURE:-1.0}"
-EVAL_TOP_P="${EVAL_TOP_P:-0.9}"
+EVAL_BACKEND="${EVAL_BACKEND:-vllm}"
+EVAL_MODE="${EVAL_MODE:-greedy}"
+EVAL_TEMPERATURE="${EVAL_TEMPERATURE:-0.0}"
+EVAL_TOP_P="${EVAL_TOP_P:-1.0}"
+EVAL_RUN_VANILLA_BASELINE="${EVAL_RUN_VANILLA_BASELINE:-true}"
 EVAL_REPORT_TO_WANDB="${EVAL_REPORT_TO_WANDB:-true}"
 EVAL_REPORT_CACHED_TO_WANDB="${EVAL_REPORT_CACHED_TO_WANDB:-true}"
-FORCE_RERUN="${FORCE_RERUN:-false}"
+FORCE_RERUN="${FORCE_RERUN:-true}"
 
 RESULTS_ROOT="${RESULTS_ROOT:-/scratch/cs552-results}"
-CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-checkpoints}"
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/scratch/cs552-checkpoints}"
 HYDRA_ROOT="${HYDRA_ROOT:-outputs/qwen3-eval-sweep}"
 PRETRAINED_CHECKPOINT_ROOT="${PRETRAINED_CHECKPOINT_ROOT:-${CHECKPOINT_ROOT}/pretrained}"
+SUMMARY_CSV="${SUMMARY_CSV:-${RESULTS_ROOT}/qwen3_checkpoint_eval_summary.csv}"
 
 REPO_BRANCH="${REPO_BRANCH:-codex/vllm-eval}"
-
-case "${DRAFT_SIZE}" in
-  0.6b|0_6b)
-    DRAFT_TAG="0p6b"
-    LOSSES="${LOSSES:-fkl rkl jsd ce}"
-    ;;
-  1.7b|1_7b)
-    DRAFT_TAG="1p7b"
-    LOSSES="${LOSSES:-ce}"
-    ;;
-  *)
-    echo "ERROR: DRAFT_SIZE must be 0.6b or 1.7b, got '${DRAFT_SIZE}'." >&2
-    exit 1
-    ;;
-esac
-
-EXPERIMENT_NAME="${EXPERIMENT_NAME:-qwen3_${DRAFT_TAG}_${DATA}_seed${SEED}}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-qwen3_checkpoint_eval_sweep}"
 WANDB_GROUP="${WANDB_GROUP:-${EXPERIMENT_NAME}}"
-RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-qwen3_${DRAFT_TAG}}"
 
 quote() {
   printf "%q" "$1"
 }
 
-run_command="DRAFT_SIZE=$(quote "${DRAFT_SIZE}")"
-run_command+=" DATA=$(quote "${DATA}")"
+run_command="DATA=$(quote "${DATA}")"
 run_command+=" SEED=$(quote "${SEED}")"
 run_command+=" TARGET_ID=$(quote "${TARGET_ID}")"
 run_command+=" PYTORCH_CUDA_ALLOC_CONF=$(quote "${PYTORCH_CUDA_ALLOC_CONF}")"
@@ -77,6 +60,7 @@ run_command+=" EVAL_BACKEND=$(quote "${EVAL_BACKEND}")"
 run_command+=" EVAL_MODE=$(quote "${EVAL_MODE}")"
 run_command+=" EVAL_TEMPERATURE=$(quote "${EVAL_TEMPERATURE}")"
 run_command+=" EVAL_TOP_P=$(quote "${EVAL_TOP_P}")"
+run_command+=" EVAL_RUN_VANILLA_BASELINE=$(quote "${EVAL_RUN_VANILLA_BASELINE}")"
 run_command+=" EVAL_REPORT_TO_WANDB=$(quote "${EVAL_REPORT_TO_WANDB}")"
 run_command+=" EVAL_REPORT_CACHED_TO_WANDB=$(quote "${EVAL_REPORT_CACHED_TO_WANDB}")"
 run_command+=" FORCE_RERUN=$(quote "${FORCE_RERUN}")"
@@ -84,14 +68,16 @@ run_command+=" RESULTS_ROOT=$(quote "${RESULTS_ROOT}")"
 run_command+=" CHECKPOINT_ROOT=$(quote "${CHECKPOINT_ROOT}")"
 run_command+=" HYDRA_ROOT=$(quote "${HYDRA_ROOT}")"
 run_command+=" PRETRAINED_CHECKPOINT_ROOT=$(quote "${PRETRAINED_CHECKPOINT_ROOT}")"
-run_command+=" LOSSES=$(quote "${LOSSES}")"
+run_command+=" SUMMARY_CSV=$(quote "${SUMMARY_CSV}")"
 run_command+=" EXPERIMENT_NAME=$(quote "${EXPERIMENT_NAME}")"
 run_command+=" WANDB_GROUP=$(quote "${WANDB_GROUP}")"
-run_command+=" RUN_NAME_PREFIX=$(quote "${RUN_NAME_PREFIX}")"
 run_command+=" bash scripts/run_qwen3_eval_sweep.sh"
 echo ">>> RUN_COMMAND chars: ${#run_command} (kept short for RunAI env limit)"
 
-echo ">>> Submitting Qwen3 eval-only job: ${EXPERIMENT_NAME}"
+echo ">>> Submitting Qwen3 checkpoint eval job: ${EXPERIMENT_NAME}"
 echo ">>> Checkpoint root inside pod: ${CHECKPOINT_ROOT}"
 echo ">>> Results root inside pod: ${RESULTS_ROOT}"
-REPO_BRANCH="${REPO_BRANCH}" RUN_NAME="${EXPERIMENT_NAME}-eval" RUN_COMMAND="${run_command}" ./rcp_support/submit_train.sh "qwen3-${DRAFT_TAG}-eval"
+echo ">>> Summary CSV inside pod: ${SUMMARY_CSV}"
+echo ">>> Eval backend/mode/temp/top_p: ${EVAL_BACKEND}/${EVAL_MODE}/${EVAL_TEMPERATURE}/${EVAL_TOP_P}"
+echo ">>> W&B enabled: ${EVAL_REPORT_TO_WANDB}"
+REPO_BRANCH="${REPO_BRANCH}" RUN_NAME="${EXPERIMENT_NAME}-eval" RUN_COMMAND="${run_command}" ./rcp_support/submit_train.sh "qwen3-eval"
