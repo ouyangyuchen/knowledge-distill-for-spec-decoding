@@ -27,6 +27,7 @@ MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
 KD_CHUNK_SIZE="${KD_CHUNK_SIZE:-128}"
 COMPILE_TARGET="${COMPILE_TARGET:-false}"
 EVAL_REPORTING_STEPS="${EVAL_REPORTING_STEPS:-100}"
+VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
 PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 TRAIN_REPORT_TO_WANDB="${TRAIN_REPORT_TO_WANDB:-true}"
 
@@ -45,6 +46,7 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-qwen25_3btarget_0p5b_targetgen50k_seed${SEED
 WANDB_GROUP="${WANDB_GROUP:-${EXPERIMENT_NAME}}"
 RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-qwen25_3btarget_0p5b}"
 
+export VLLM_WORKER_MULTIPROC_METHOD
 export PYTORCH_CUDA_ALLOC_CONF
 
 is_true() {
@@ -121,6 +123,7 @@ echo ">>> per-device batch size: ${BATCH_SIZE}"
 echo ">>> gradient accumulation steps: ${GRAD_ACCUM_STEPS}"
 echo ">>> KD chunk size: ${KD_CHUNK_SIZE}"
 echo ">>> compile_target: ${COMPILE_TARGET}"
+echo ">>> vLLM worker multiprocessing method: ${VLLM_WORKER_MULTIPROC_METHOD}"
 echo ">>> train report to W&B: ${TRAIN_REPORT_TO_WANDB}"
 echo ">>> eval after training: ${RUN_EVAL}"
 echo ">>> eval pretrained baseline: ${EVAL_PRETRAINED_BASELINE}"
