@@ -19,6 +19,7 @@ PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 GAMMAS="${GAMMAS:-1 2 4 6 8}"
 TEMPERATURES="${TEMPERATURES:-0.0 0.5 1.0 2.0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-256}"
+EVAL_MAX_NEW_TOKENS_VALUES="${EVAL_MAX_NEW_TOKENS_VALUES:-128 256 512}"
 EVAL_WARMUP="${EVAL_WARMUP:-1}"
 EVAL_REPEATS="${EVAL_REPEATS:-1}"
 EVAL_BACKEND="${EVAL_BACKEND:-vllm}"
@@ -88,7 +89,7 @@ echo ">>> prompts: ${EVAL_PROMPTS_JSONL}"
 echo ">>> prompts limit: ${EVAL_PROMPTS_LIMIT}"
 echo ">>> gammas: ${GAMMAS}"
 echo ">>> temperatures: ${TEMPERATURES}"
-echo ">>> max_new_tokens: ${EVAL_MAX_NEW_TOKENS}"
+echo ">>> max_new_tokens values: ${EVAL_MAX_NEW_TOKENS_VALUES}"
 echo ">>> warmup/repeats: ${EVAL_WARMUP}/${EVAL_REPEATS}"
 echo ">>> backend: ${EVAL_BACKEND}"
 echo ">>> mode: ${EVAL_MODE}"
@@ -238,67 +239,69 @@ PY
 
 failures=0
 
-for gamma in ${GAMMAS}; do
-  for temperature in ${TEMPERATURES}; do
-    tag="$(temp_tag "${temperature}")"
-    mode="$(mode_for_temperature "${temperature}")"
-    run_name="${CHECKPOINT_RUN}_runtime_g${gamma}_t${tag}_max${EVAL_MAX_NEW_TOKENS}"
-    results_dir="${RESULTS_ROOT}/${run_name}"
-    summary_path="${results_dir}/eval_summary.json"
-    hydra_dir="${HYDRA_ROOT}/${run_name}"
+for max_new_tokens in ${EVAL_MAX_NEW_TOKENS_VALUES}; do
+  for gamma in ${GAMMAS}; do
+    for temperature in ${TEMPERATURES}; do
+      tag="$(temp_tag "${temperature}")"
+      mode="$(mode_for_temperature "${temperature}")"
+      run_name="${CHECKPOINT_RUN}_runtime_g${gamma}_t${tag}_max${max_new_tokens}"
+      results_dir="${RESULTS_ROOT}/${run_name}"
+      summary_path="${results_dir}/eval_summary.json"
+      hydra_dir="${HYDRA_ROOT}/${run_name}"
 
-    if [[ -f "${summary_path}" && "${FORCE_RERUN}" != "true" && "${FORCE_RERUN}" != "1" ]]; then
-      echo ">>> Skipping cached ${run_name}"
+      if [[ -f "${summary_path}" && "${FORCE_RERUN}" != "true" && "${FORCE_RERUN}" != "1" ]]; then
+        echo ">>> Skipping cached ${run_name}"
+        append_summary_row \
+          "${run_name}" "${CHECKPOINT_RUN}" "cached" "0" "0.0" \
+          "${EVAL_BACKEND}" "${mode}" "${temperature}" "${EVAL_TOP_P}" "${gamma}" \
+          "${max_new_tokens}" "${EVAL_RUN_VANILLA_BASELINE}" "${DRAFT_PATH}" \
+          "${EVAL_PROMPTS_JSONL}" "${summary_path}"
+        continue
+      fi
+
+      echo ">>> Evaluating ${run_name}"
+      start_s="$(date +%s)"
+      set +e
+      WANDB_GROUP="${WANDB_GROUP}" \
+      WANDB_JOB_TYPE="eval" \
+      "${KDSD_PYTHON}" scripts/evaluate_sd.py \
+        model=qwen3 "data=${DATA}" "${target_override[@]}" \
+        "draft=${DRAFT_PATH}" \
+        "pretrained_checkpoint_root=${PRETRAINED_CHECKPOINT_ROOT}" \
+        "prompts.jsonl=${EVAL_PROMPTS_JSONL}" \
+        "prompts.hf_dataset=null" \
+        "prompts.limit=${EVAL_PROMPTS_LIMIT}" \
+        "runtime.mode=${mode}" \
+        "runtime.temperature=${temperature}" \
+        "runtime.top_p=${EVAL_TOP_P}" \
+        "runtime.gamma=${gamma}" \
+        "runtime.max_new_tokens=${max_new_tokens}" \
+        "eval.backend=${EVAL_BACKEND}" \
+        "eval.n_warmup=${EVAL_WARMUP}" \
+        "eval.n_repeats=${EVAL_REPEATS}" \
+        "eval.run_vanilla_baseline=${EVAL_RUN_VANILLA_BASELINE}" \
+        "wandb.enabled=${EVAL_REPORT_TO_WANDB}" \
+        "results_dir=${results_dir}" \
+        "hydra.run.dir=${hydra_dir}" \
+        "run_name=${run_name}"
+      rc="$?"
+      set -e
+      end_s="$(date +%s)"
+      elapsed_s="$((end_s - start_s))"
+
+      status="ok"
+      if [[ "${rc}" != "0" || ! -f "${summary_path}" ]]; then
+        status="failed"
+        failures=$((failures + 1))
+        echo ">>> ERROR: ${run_name} failed with return code ${rc}" >&2
+      fi
+
       append_summary_row \
-        "${run_name}" "${CHECKPOINT_RUN}" "cached" "0" "0.0" \
+        "${run_name}" "${CHECKPOINT_RUN}" "${status}" "${rc}" "${elapsed_s}" \
         "${EVAL_BACKEND}" "${mode}" "${temperature}" "${EVAL_TOP_P}" "${gamma}" \
-        "${EVAL_MAX_NEW_TOKENS}" "${EVAL_RUN_VANILLA_BASELINE}" "${DRAFT_PATH}" \
+        "${max_new_tokens}" "${EVAL_RUN_VANILLA_BASELINE}" "${DRAFT_PATH}" \
         "${EVAL_PROMPTS_JSONL}" "${summary_path}"
-      continue
-    fi
-
-    echo ">>> Evaluating ${run_name}"
-    start_s="$(date +%s)"
-    set +e
-    WANDB_GROUP="${WANDB_GROUP}" \
-    WANDB_JOB_TYPE="eval" \
-    "${KDSD_PYTHON}" scripts/evaluate_sd.py \
-      model=qwen3 "data=${DATA}" "${target_override[@]}" \
-      "draft=${DRAFT_PATH}" \
-      "pretrained_checkpoint_root=${PRETRAINED_CHECKPOINT_ROOT}" \
-      "prompts.jsonl=${EVAL_PROMPTS_JSONL}" \
-      "prompts.hf_dataset=null" \
-      "prompts.limit=${EVAL_PROMPTS_LIMIT}" \
-      "runtime.mode=${mode}" \
-      "runtime.temperature=${temperature}" \
-      "runtime.top_p=${EVAL_TOP_P}" \
-      "runtime.gamma=${gamma}" \
-      "runtime.max_new_tokens=${EVAL_MAX_NEW_TOKENS}" \
-      "eval.backend=${EVAL_BACKEND}" \
-      "eval.n_warmup=${EVAL_WARMUP}" \
-      "eval.n_repeats=${EVAL_REPEATS}" \
-      "eval.run_vanilla_baseline=${EVAL_RUN_VANILLA_BASELINE}" \
-      "wandb.enabled=${EVAL_REPORT_TO_WANDB}" \
-      "results_dir=${results_dir}" \
-      "hydra.run.dir=${hydra_dir}" \
-      "run_name=${run_name}"
-    rc="$?"
-    set -e
-    end_s="$(date +%s)"
-    elapsed_s="$((end_s - start_s))"
-
-    status="ok"
-    if [[ "${rc}" != "0" || ! -f "${summary_path}" ]]; then
-      status="failed"
-      failures=$((failures + 1))
-      echo ">>> ERROR: ${run_name} failed with return code ${rc}" >&2
-    fi
-
-    append_summary_row \
-      "${run_name}" "${CHECKPOINT_RUN}" "${status}" "${rc}" "${elapsed_s}" \
-      "${EVAL_BACKEND}" "${mode}" "${temperature}" "${EVAL_TOP_P}" "${gamma}" \
-      "${EVAL_MAX_NEW_TOKENS}" "${EVAL_RUN_VANILLA_BASELINE}" "${DRAFT_PATH}" \
-      "${EVAL_PROMPTS_JSONL}" "${summary_path}"
+    done
   done
 done
 

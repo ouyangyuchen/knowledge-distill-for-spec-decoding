@@ -5,7 +5,7 @@
 #
 # Common overrides:
 #   CHECKPOINT_RUN=qwen3_8btarget_0p6b_tgen_jsd_ultrachat_50k_target_gen_seed42 ./scripts/submit_qwen3_runtime_sweep.sh
-#   GAMMAS="1 2 4 6 8" TEMPERATURES="0.0 0.5 1.0 2.0" ./scripts/submit_qwen3_runtime_sweep.sh
+#   GAMMAS="1 2 4 6 8" TEMPERATURES="0.0 0.5 1.0 2.0" EVAL_MAX_NEW_TOKENS_VALUES="128 256 512" ./scripts/submit_qwen3_runtime_sweep.sh
 #   DRAFT_PATH=/scratch/cs552-checkpoints/my_run/model ./scripts/submit_qwen3_runtime_sweep.sh
 
 set -euo pipefail
@@ -17,7 +17,7 @@ GROUP="${GROUP:-g67}"
 WANDB_MODE="${WANDB_MODE:-online}"
 REPO_URL="${REPO_URL:-https://github.com/ouyangyuchen/knowledge-distill-for-spec-decoding.git}"
 REPO_BRANCH="${REPO_BRANCH:-codex/vllm-eval}"
-REPO_DIR="${REPO_DIR:-/scratch/cs552-repos/cs552-kdsd-${GASPAR}}"
+REPO_DIR="${REPO_DIR:-/scratch/cs552-repos/cs552-kdsd-${GASPAR}-qwen3-runtime-sweep}"
 WANDB_DIR="${WANDB_DIR:-/scratch/wandb}"
 HYDRA_OUTPUTS_DIR="${HYDRA_OUTPUTS_DIR:-/scratch/cs552-hydra-outputs}"
 NODE="${NODE:-a100-40g}"
@@ -34,23 +34,24 @@ PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 KDSD_VENV="${KDSD_VENV:-/scratch/venvs/kdsd-vllm}"
 
 GAMMAS="${GAMMAS:-1 2 4 6 8}"
-TEMPERATURES="${TEMPERATURES:-0.0 0.5 1.0 2.0}"
+TEMPERATURES="${TEMPERATURES:-0.0 0.5 1.0 1.5 2.0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-256}"
+EVAL_MAX_NEW_TOKENS_VALUES="${EVAL_MAX_NEW_TOKENS_VALUES:-128 256 512}"
 EVAL_WARMUP="${EVAL_WARMUP:-1}"
-EVAL_REPEATS="${EVAL_REPEATS:-1}"
+EVAL_REPEATS="${EVAL_REPEATS:-3}"
 EVAL_BACKEND="${EVAL_BACKEND:-vllm}"
 EVAL_MODE="${EVAL_MODE:-auto}"
-EVAL_TOP_P="${EVAL_TOP_P:-1.0}"
+EVAL_TOP_P="${EVAL_TOP_P:-0.9}"
 EVAL_RUN_VANILLA_BASELINE="${EVAL_RUN_VANILLA_BASELINE:-true}"
 EVAL_REPORT_TO_WANDB="${EVAL_REPORT_TO_WANDB:-true}"
-FORCE_RERUN="${FORCE_RERUN:-false}"
+FORCE_RERUN="${FORCE_RERUN:-true}"
 
 RESULTS_ROOT="${RESULTS_ROOT:-/scratch/cs552-results}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/scratch/cs552-checkpoints}"
 HYDRA_ROOT="${HYDRA_ROOT:-outputs/qwen3-runtime-sweep}"
 PRETRAINED_CHECKPOINT_ROOT="${PRETRAINED_CHECKPOINT_ROOT:-${CHECKPOINT_ROOT}/pretrained}"
 EVAL_PROMPTS_JSONL="${EVAL_PROMPTS_JSONL:-/scratch/cs552-data/processed/${BASE_DATA}/eval.jsonl}"
-EVAL_PROMPTS_LIMIT="${EVAL_PROMPTS_LIMIT:-20}"
+EVAL_PROMPTS_LIMIT="${EVAL_PROMPTS_LIMIT:-50}"
 
 if [[ "${GASPAR}" == "gaspar" || -z "${GASPAR}" ]]; then
   echo "ERROR: set GASPAR to your EPFL GASPAR username." >&2
@@ -191,6 +192,7 @@ runai_args=(
   --environment-variable "GAMMAS=${GAMMAS}"
   --environment-variable "TEMPERATURES=${TEMPERATURES}"
   --environment-variable "EVAL_MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS}"
+  --environment-variable "EVAL_MAX_NEW_TOKENS_VALUES=${EVAL_MAX_NEW_TOKENS_VALUES}"
   --environment-variable "EVAL_WARMUP=${EVAL_WARMUP}"
   --environment-variable "EVAL_REPEATS=${EVAL_REPEATS}"
   --environment-variable "EVAL_BACKEND=${EVAL_BACKEND}"
@@ -223,6 +225,7 @@ echo ">>> Results root inside pod: ${RESULTS_ROOT}"
 echo ">>> Summary CSV inside pod: ${SUMMARY_CSV}"
 echo ">>> Gammas: ${GAMMAS}"
 echo ">>> Temperatures: ${TEMPERATURES}"
+echo ">>> Max new token lengths: ${EVAL_MAX_NEW_TOKENS_VALUES}"
 echo ">>> Eval backend/mode/top_p: ${EVAL_BACKEND}/${EVAL_MODE}/${EVAL_TOP_P}"
 echo ">>> Python venv inside pod: ${KDSD_VENV}"
 echo ">>> W&B enabled: ${EVAL_REPORT_TO_WANDB}"
